@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>幣價查詢</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <header class="app-header">
+        <div class="brand">
+            <span class="brand-icon">◆</span>
+            <h1>Crypto Tracker</h1>
+        </div>
+        <div class="fear-greed-pill" id="fear-greed-pill">
+            <span class="pill-label">恐慌指數</span>
+            <span id="fear-greed-index">—</span>
+        </div>
+    </header>
+
+    <section class="card live-prices">
+        <h2 class="section-title">即時報價</h2>
+        <div class="price-table-wrap">
+            <table class="price-table">
+                <thead>
+                    <tr>
+                        <th>幣種</th>
+                        <th>Binance</th>
+                        <th>OKX</th>
+                    </tr>
+                </thead>
+                <tbody id="live-price-body">
+                    <tr><td colspan="3" class="muted">載入中…</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="card kline-panel">
+        <h2 class="section-title">K 棒漲跌幅至現價</h2>
+        <p class="section-hint">含市值前 20、漲幅前 15、跌幅前 15，以及您自填的幣種（Binance USDT）</p>
+
+        <div class="form-row">
+            <label for="kline-interval">K 週期</label>
+            <select id="kline-interval">
+                <option value="1m">1 分鐘</option>
+                <option value="5m">5 分鐘</option>
+                <option value="15m">15 分鐘</option>
+                <option value="1h" selected>1 小時</option>
+                <option value="4h">4 小時</option>
+                <option value="1d">1 日</option>
+                <option value="1w">1 週</option>
+            </select>
+        </div>
+        <div class="form-row">
+            <span class="field-label">K 棒時間</span>
+            <div class="datetime-row">
+                <div class="datetime-field">
+                    <label for="kline-date">日期</label>
+                    <input type="date" id="kline-date" />
+                </div>
+                <div class="datetime-field">
+                    <label for="kline-time">時間</label>
+                    <input type="time" id="kline-time" step="60" />
+                </div>
+            </div>
+        </div>
+        <div class="form-row">
+            <label for="kline-symbol">自訂幣種（選填，可多個）</label>
+            <input type="text" id="kline-symbol" placeholder="如 PEPE, WIF, ARB（逗號或空格分隔）" />
+        </div>
+        <button type="button" id="kline-btn" class="btn-primary">查詢漲跌幅</button>
+
+        <p id="kline-meta" class="kline-meta muted">請選擇 K 棒時間並點擊查詢</p>
+        <div class="compare-table-wrap">
+            <table class="compare-table" id="kline-compare-table" hidden>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>幣種</th>
+                        <th>源</th>
+                        <th>當時</th>
+                        <th>現價</th>
+                        <th>幅度</th>
+                    </tr>
+                </thead>
+                <tbody id="kline-compare-body"></tbody>
+            </table>
+        </div>
+    </section>
+
+    <script src="popup.js"></script>
+</body>
+</html>

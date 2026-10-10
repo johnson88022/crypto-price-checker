@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#0f1419">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Crypto Price Checker">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="description" content="Crypto Price Checker — Binance 即時幣價與 K 棒漲跌幅查詢">
+    <link rel="manifest" href="./manifest.webmanifest">
+    <link rel="icon" href="./icon.png" type="image/png">
+    <link rel="apple-touch-icon" href="./icon-192.png">
+    <link rel="stylesheet" href="./style.css">
+    <title>Crypto Price Checker</title>
+</head>
+<body>
+    <main class="app-shell">
+        <header class="app-header">
+            <div class="brand">
+                <img class="brand-icon-img" src="./icon.png" alt="" width="28" height="28">
+                <div>
+                    <h1>Crypto Price Checker</h1>
+                    <p class="app-subtitle">Binance Spot · Market Data</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <div class="fear-greed-pill" id="fear-greed-pill">
+                    <span class="pill-label">恐慌與貪婪指數</span>
+                    <span id="fear-greed-index">—</span>
+                </div>
+                <button type="button" id="refresh-btn" class="refresh-btn" aria-label="重新整理價格" title="重新整理">
+                    ↻
+                </button>
+            </div>
+        </header>
+
+        <div id="app-status" class="app-status" role="status" aria-live="polite">
+            <span id="loading-indicator" class="loading-dot" hidden></span>
+            <span id="app-status-text">準備載入…</span>
+        </div>
+
+        <section class="card live-prices">
+            <div class="section-heading">
+                <h2 class="section-title">即時報價</h2>
+                <span id="last-updated" class="last-updated">尚未更新</span>
+            </div>
+            <div class="price-table-wrap">
+                <table class="price-table">
+                    <thead>
+                        <tr>
+                            <th>幣種</th>
+                            <th>Binance Spot</th>
+                        </tr>
+                    </thead>
+                    <tbody id="live-price-body">
+                        <tr><td colspan="2" class="muted">載入中…</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="card dca-panel" id="dca-panel">
+            <div class="section-heading">
+                <div>
+                    <h2 class="section-title">定投報酬</h2>
+                    <p class="section-hint">輸入定投期間與金額，依 Binance 歷史價格估算每次買入後的最終價值</p>
+                </div>
+            </div>
+
+            <div class="dca-grid">
+                <div class="form-row">
+                    <label for="dca-symbol-select">幣種（幣安市值前 10 或自訂）</label>
+                    <select id="dca-symbol-select" aria-label="選擇定投幣種"></select>
+                    <input type="text" id="dca-symbol-custom" placeholder="輸入自訂幣種，例如 WIF" autocomplete="off" autocapitalize="characters" hidden>
+                </div>
+                <div class="form-row">
+                    <label for="dca-start">開始時間</label>
+                    <input type="date" id="dca-start">
+                </div>
+                <div class="form-row">
+                    <label for="dca-frequency">定投頻率</label>
+                    <select id="dca-frequency">
+                        <option value="daily">每天</option>
+                        <option value="weekly" selected>每週</option>
+                        <option value="monthly">每月</option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <label for="dca-end">結束時間</label>
+                    <div class="date-input-with-check">
+                        <input type="date" id="dca-end">
+                        <label class="checkbox-label"><input type="checkbox" id="dca-until-now" checked> 至今</label>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <label for="dca-amount">每次定投金額（USDT）</label>
+                    <input type="number" id="dca-amount" min="0.01" step="0.01" inputmode="decimal" placeholder="例如 100">
+                </div>
+            </div>
+
+            <button type="button" id="dca-btn" class="btn-primary">計算定投報酬</button>
+            <p id="dca-status" class="kline-meta muted" role="status" aria-live="polite">尚未計算</p>
+
+            <div id="dca-result" class="dca-result" hidden>
+                <div class="dca-result-grid">
+                    <div class="result-item"><span>總投入</span><strong id="dca-invested">—</strong></div>
+                    <div class="result-item"><span>最終金額</span><strong id="dca-final-value">—</strong></div>
+                    <div class="result-item"><span>報酬金額</span><strong id="dca-profit">—</strong></div>
+                    <div class="result-item"><span>實際定投報酬率</span><strong id="dca-roi">—</strong></div>
+                    <div class="result-item dca-scenario-item dca-scenario-best"><span>最佳情境｜每次買在週／月／日最低點</span><strong id="dca-best-roi">—</strong><small>期末估值：<span id="dca-best-value">—</span></small><small>平均買入價：<strong id="dca-best-average-price">—</strong></small></div>
+                    <div class="result-item dca-scenario-item dca-scenario-worst"><span>最差情境｜每次買在週／月／日最高點</span><strong id="dca-worst-roi">—</strong><small>期末估值：<span id="dca-worst-value">—</span></small><small>平均買入價：<strong id="dca-worst-average-price">—</strong></small></div>
+                    <div class="result-item result-item-wide"><span>總平均買入價</span><strong id="dca-average-price">—</strong></div>
+                    <div class="result-item current-price-item"><span>即時現價</span><strong id="dca-current-price">—</strong><small>Binance Spot · 即時查詢</small></div>
+                    <div class="result-item"><span>累積持有數量</span><strong id="dca-total-units">—</strong></div>
+                    <div class="result-item result-item-wide recommendation-item">
+                        <span>相對平均買入價建議</span>
+                        <strong id="dca-recommendation" class="recommendation-badge">—</strong>
+                        <small id="dca-recommendation-detail">—</small><div id="dca-price-warning" class="dca-price-warning">—</div>
+                        <div class="recommendation-rule">分級基準：≤ -20% 非常推薦 · -20%～-5% 推薦 · -5%～+5% 普通 · +5%～+20% 不推薦 · &gt; +20% 非常不推薦</div>
+                    </div>
+                </div>
+                <div class="dca-summary" id="dca-summary"></div>
+                <details class="dca-purchases">
+                    <summary>查看分批買入時間與價格 <span id="dca-purchase-count">0 次</span></summary>
+                    <div class="dca-table-wrap">
+                        <table class="dca-purchase-table">
+                            <thead>
+                                <tr><th>#</th><th>買入日期</th><th>買入價格</th><th>投入</th><th>買入數量</th></tr>
+                            </thead>
+                            <tbody id="dca-purchase-body"></tbody>
+                        </table>
+                    </div>
+                </details>
+            </div>
+        </section>
+
+        <section class="card kline-panel">
+            <h2 class="section-title">K 棒漲跌幅至現價</h2>
+            <p class="section-hint">含 Binance 上架幣種市值前 10、漲幅前 15、跌幅前 15，以及您自填的幣種（USDT 現貨）</p>
+
+            <div class="form-row">
+                <label for="kline-interval">K 週期</label>
+                <select id="kline-interval">
+                    <option value="1m">1 分鐘</option>
+                    <option value="5m">5 分鐘</option>
+                    <option value="15m">15 分鐘</option>
+                    <option value="1h" selected>1 小時</option>
+                    <option value="4h">4 小時</option>
+                    <option value="1d">1 日</option>
+                    <option value="1w">1 週</option>
+                </select>
+            </div>
+
+            <div class="form-row">
+                <span class="field-label">K 棒時間</span>
+                <div class="datetime-row">
+                    <div class="datetime-field">
+                        <label for="kline-date">日期</label>
+                        <input type="date" id="kline-date">
+                    </div>
+                    <div class="datetime-field">
+                        <label for="kline-time">時間</label>
+                        <input type="time" id="kline-time" step="60">
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <label for="kline-symbol">自訂幣種（選填，可多個）</label>
+                <input type="text" id="kline-symbol" placeholder="如 PEPE, WIF, ARB（逗號或空格分隔）" autocomplete="off">
+            </div>
+
+            <button type="button" id="kline-btn" class="btn-primary">查詢漲跌幅</button>
+
+            <p id="kline-meta" class="kline-meta muted">請選擇 K 棒時間並點擊查詢</p>
+            <div class="compare-table-wrap">
+                <table class="compare-table" id="kline-compare-table" hidden>
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>幣種</th>
+                            <th>源</th>
+                            <th>當時</th>
+                            <th>現價</th>
+                            <th>幅度</th>
+                        </tr>
+                    </thead>
+                    <tbody id="kline-compare-body"></tbody>
+                </table>
+            </div>
+        </section>
+
+        <footer class="app-footer">
+            <span>行情來源：Binance Spot · 恐慌指數：Alternative.me</span>
+            <span>純前端 PWA</span>
+        </footer>
+    </main>
+
+    <script src="./app.js"></script>
+</body>
+</html>

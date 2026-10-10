@@ -1,0 +1,18 @@
+{
+   "action": {
+      "default_icon": "icon.png",
+      "default_popup": "popup.html"
+   },
+   "description": "交易所幣價追蹤",
+   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsCuDo1wKPdVelxIp5O7g3qK+lpaHZeyj+B+og9xniqpMcTN4+Y+1WYzrohrWzGhqkqoVdd2Yi4GgTN2ZqcJTam6De528gTfw+d8q3OYGO8h1z152AkaZzUYER4imbvHhxnRq2ldn45fWXmh089RnQ4uX66OAkHwQHMowOleAk4WbPEAFKhHzyMVpCCAdVlUQ/wYsgFWbKX7mkd3rg3LHhWmD9tdBwn68C8yt8/lLGlgPU8KtuAqVYaR1QbVWc4yXfyIScBnWkTS2hHzX7dW1G9oQ1TdD+IcZbJ5VC7v2YpZyRVQfJ+eBGrDZKpxuZgm31pm6w6cxjQR5hfVPLfg/CwIDAQAB",
+   "manifest_version": 3,
+   "name": "Crypto Price Checker",
+   "host_permissions": [
+      "https://api.binance.com/*",
+      "https://www.okx.com/*",
+      "https://api.alternative.me/*"
+   ],
+   "permissions": [  ],
+   "update_url": "https://clients2.google.com/service/update2/crx",
+   "version": "1.3"
+}
