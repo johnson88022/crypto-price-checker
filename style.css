@@ -1225,3 +1225,18 @@ body {
     .live-interval-control { align-items: stretch; flex-direction: column; gap: 6px; }
     .live-interval-control select { width: 100%; }
 }
+
+/* Live quote readability and always-available DCA coin picker */
+.price-table th:nth-child(2) { min-width: 118px; }
+.price-table th:nth-child(3) { min-width: 140px; }
+.price-table td.live-current-price { font-variant-numeric: tabular-nums; font-weight: 700; white-space: nowrap; }
+.price-table td.live-period-change { font-variant-numeric: tabular-nums; font-weight: 800; white-space: nowrap; }
+.dca-symbol-picker { position: relative; width: 100%; }
+.dca-symbol-picker input { width: 100%; padding-right: 44px; }
+.symbol-picker-toggle { position: absolute; right: 5px; top: 50%; transform: translateY(-50%); width: 34px; height: 34px; border: 0; border-radius: 8px; color: var(--text-primary, #f4f7fb); background: var(--surface-2, #242b33); cursor: pointer; font-size: 18px; }
+.symbol-options { position: absolute; z-index: 50; top: calc(100% + 5px); left: 0; right: 0; max-height: 260px; overflow-y: auto; padding: 5px; border: 1px solid var(--border, #39424d); border-radius: 12px; background: var(--surface, #171d24); box-shadow: 0 12px 30px rgba(0,0,0,.35); }
+.symbol-options[hidden] { display: none !important; }
+.symbol-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 10px 11px; border: 0; border-radius: 8px; text-align: left; color: var(--text-primary, #f4f7fb); background: transparent; cursor: pointer; }
+.symbol-option:hover, .symbol-option:focus { outline: none; background: rgba(240,185,11,.13); }
+.symbol-option span { color: var(--text-muted, #aab4c0); font-size: 11px; }
+.symbol-options-empty { padding: 12px; color: var(--text-muted, #aab4c0); font-size: 12px; }

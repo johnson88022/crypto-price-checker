@@ -148,8 +148,8 @@ function renderLivePriceTable() {
     tbody.innerHTML = LIVE_SYMBOLS.map((symbol) => `
         <tr>
             <td class="sym">${symbolLabel(symbol)}</td>
-            <td id="${symbol.toLowerCase()}-binance">…</td>
-            <td id="${symbol.toLowerCase()}-change">…</td>
+            <td id="${symbol.toLowerCase()}-binance" class="live-current-price">載入中…</td>
+            <td id="${symbol.toLowerCase()}-change" class="live-period-change">載入中…</td>
         </tr>`).join("");
 }
 
@@ -198,9 +198,9 @@ async function updatePrices() {
         const changeCell = document.getElementById(`${symbol.toLowerCase()}-change`);
         const price = priceMap.get(symbol);
         const change = changes.get(symbol);
-        if (priceCell) priceCell.textContent = price == null ? "—" : formatPrice(symbol, price);
+        if (priceCell) priceCell.textContent = price == null ? "現價暫不可用" : formatPrice(symbol, price);
         if (changeCell) {
-            changeCell.textContent = change == null ? "—" : formatPct(change);
+            changeCell.textContent = change == null ? "區間漲跌暫不可用" : formatPct(change);
             changeCell.classList.toggle("pct-up", change != null && change >= 0);
             changeCell.classList.toggle("pct-down", change != null && change < 0);
             changeCell.title = `Binance ${selected.label} 區間漲跌幅`;
@@ -208,7 +208,7 @@ async function updatePrices() {
         if (price == null) failed += 1;
     });
     const label = document.getElementById("live-change-label");
-    if (label) label.textContent = `${selected.label}漲跌幅（從本區間開盤價至現價）`;
+    if (label) label.textContent = `${selected.label}至今漲跌`;
     return failed;
 }
 
@@ -935,12 +935,48 @@ async function calculateDcaReturn() {
     }
 }
 
-function populateDcaSymbolOptions() {
+function populateDcaSymbolOptions(filter = "") {
     const list = document.getElementById("dca-symbol-options");
-    if (!list) return;
-    list.innerHTML = TOP25_SYMBOLS.map(symbol => `<option value="${symbolLabel(symbol)}">${symbolLabel(symbol)} / USDT（市值前25）</option>`).join("");
     const input = document.getElementById("dca-symbol-input");
+    if (!list) return;
+    const query = String(filter || "").trim().toUpperCase().replace(/USDT$/, "");
+    const symbols = TOP25_SYMBOLS.filter(symbol => !query || symbolLabel(symbol).includes(query));
+    list.innerHTML = symbols.map(symbol => {
+        const label = symbolLabel(symbol);
+        return `<button type="button" class="symbol-option" role="option" data-symbol="${label}"><strong>${label}</strong><span>USDT · 市值前 25</span></button>`;
+    }).join("") || `<div class="symbol-options-empty">沒有符合的熱門幣種，可直接輸入自訂代號</div>`;
     if (input && !input.value) input.value = "BTC";
+}
+
+function initDcaSymbolPicker() {
+    const input = document.getElementById("dca-symbol-input");
+    const list = document.getElementById("dca-symbol-options");
+    const toggle = document.getElementById("dca-symbol-toggle");
+    if (!input || !list || !toggle) return;
+    const open = () => {
+        populateDcaSymbolOptions(input.value);
+        list.hidden = false;
+        input.setAttribute("aria-expanded", "true");
+    };
+    const close = () => {
+        list.hidden = true;
+        input.setAttribute("aria-expanded", "false");
+    };
+    input.addEventListener("focus", open);
+    input.addEventListener("click", open);
+    input.addEventListener("input", () => { open(); populateDcaSymbolOptions(input.value); });
+    toggle.addEventListener("click", () => list.hidden ? open() : close());
+    list.addEventListener("click", event => {
+        const option = event.target.closest("[data-symbol]");
+        if (!option) return;
+        input.value = option.dataset.symbol;
+        close();
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    document.addEventListener("click", event => {
+        if (!event.target.closest(".dca-symbol-picker")) close();
+    });
+    input.addEventListener("keydown", event => { if (event.key === "Escape") close(); });
 }
 
 function initDcaInputs() {
@@ -959,6 +995,7 @@ function initDcaInputs() {
     });
     end.disabled = true;
     populateDcaSymbolOptions();
+    initDcaSymbolPicker();
 }
 
 document.getElementById("dca-btn").addEventListener("click", calculateDcaReturn);

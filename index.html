@@ -22,7 +22,7 @@
                 <img class="brand-icon-img" src="./icon.png" alt="" width="28" height="28">
                 <div>
                     <h1>Crypto Price Checker</h1>
-                    <p class="app-subtitle">Binance Spot · Market Data</p>
+                    <p class="app-subtitle">加密貨幣市場工具</p>
                 </div>
             </div>
             <div class="header-actions">
@@ -65,7 +65,7 @@
                     <thead>
                         <tr>
                             <th>幣種</th>
-                            <th>Binance Spot</th>
+                            <th>現價 (USDT)</th>
                             <th id="live-change-label">15 分鐘漲跌幅（從本區間開盤價至現價）</th>
                         </tr>
                     </thead>
@@ -87,8 +87,11 @@
             <div class="dca-grid">
                 <div class="form-row">
                     <label for="dca-symbol-input">幣種（幣安市值前 25 或直接輸入自訂幣種）</label>
-                    <input type="text" id="dca-symbol-input" list="dca-symbol-options" placeholder="輸入 BTC、ETH、WIF…" autocomplete="off" autocapitalize="characters" value="BTC">
-                    <datalist id="dca-symbol-options"></datalist>
+                    <div class="dca-symbol-picker">
+                        <input type="text" id="dca-symbol-input" placeholder="點選選幣或輸入 BTC、ETH、WIF…" autocomplete="off" autocapitalize="characters" value="BTC" aria-haspopup="listbox" aria-expanded="false">
+                        <button type="button" id="dca-symbol-toggle" class="symbol-picker-toggle" aria-label="展開幣種清單" title="選擇幣種">▾</button>
+                        <div id="dca-symbol-options" class="symbol-options" role="listbox" hidden></div>
+                    </div>
                     <small class="field-help">可點選市值前 25 大幣種，也可直接輸入其他 Binance USDT 現貨幣種。</small>
                 </div>
                 <div class="form-row">
