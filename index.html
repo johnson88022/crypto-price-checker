@@ -40,6 +40,7 @@
             <button type="button" class="feature-tab active" data-feature-tab="live" role="tab" aria-selected="true">即時報價</button>
             <button type="button" class="feature-tab" data-feature-tab="dca" role="tab" aria-selected="false">定投報酬</button>
             <button type="button" class="feature-tab" data-feature-tab="kline" role="tab" aria-selected="false">K 棒漲跌幅</button>
+            <button type="button" class="feature-tab" data-feature-tab="market" role="tab" aria-selected="false">市場總覽</button>
         </nav>
 
         <div id="app-status" class="app-status" role="status" aria-live="polite">
@@ -59,6 +60,42 @@
                     </tbody>
                 </table>
             </div>
+        </section>
+
+        <section class="card market-panel feature-panel" data-feature-panel="market" role="tabpanel" hidden aria-label="市場總覽與強弱排行">
+            <div class="section-heading market-heading">
+                <div>
+                    <h2 class="section-title">市場總覽與強弱排行</h2>
+                    <p class="section-hint">用簡單數據觀察市場熱度，不代表價格一定會延續目前方向。</p>
+                </div>
+                <button type="button" id="market-refresh-btn" class="market-refresh-btn">更新排行</button>
+            </div>
+            <p id="market-status" class="market-status" role="status" aria-live="polite">尚未載入市場數據</p>
+            <div class="market-metrics" id="market-metrics">
+                <article class="market-metric"><span class="metric-title">觀察幣種上漲</span><strong id="market-up-count">—</strong><span class="metric-help">市值前 25 個可交易幣種中，價格高於 24 小時前的數量。</span></article>
+                <article class="market-metric"><span class="metric-title">觀察幣種下跌</span><strong id="market-down-count">—</strong><span class="metric-help">市值前 25 個可交易幣種中，價格低於 24 小時前的數量。</span></article>
+                <article class="market-metric"><span class="metric-title">上漲比例</span><strong id="market-up-ratio">—</strong><span class="metric-help">上漲幣種占本次觀察清單的比例；越高代表上漲較普遍。</span></article>
+                <article class="market-metric"><span class="metric-title">24 小時成交額</span><strong id="market-total-volume">—</strong><span class="metric-help">觀察清單的 USDT 成交額加總，不是流入市場的資金量。</span></article>
+            </div>
+            <div class="market-tip" id="market-summary-tip"><strong>新手怎麼看？</strong><span>先看上漲比例，再搭配成交額與漲跌排行。單一數據不能單獨當作買賣訊號。</span></div>
+            <div class="market-rank-grid">
+                <section class="market-rank-card">
+                    <div class="market-rank-heading"><h3>成交額排行 Top 10</h3><span class="info-tip" title="成交額是 24 小時內成交的交易金額。成交額高通常代表交易較活躍，但不代表一定會上漲。">i</span></div>
+                    <p class="market-explainer">看哪些幣最熱門、交易最活躍。此處按 24 小時 USDT 成交額排序。</p>
+                    <div class="market-table-wrap"><table class="market-table"><thead><tr><th># / 幣種</th><th>價格</th><th>24h 漲跌</th><th>成交額</th></tr></thead><tbody id="market-volume-body"><tr><td colspan="4" class="muted">載入中…</td></tr></tbody></table></div>
+                </section>
+                <section class="market-rank-card">
+                    <div class="market-rank-heading"><h3>漲幅排行 Top 10</h3><span class="info-tip" title="顯示符合成交額門檻的 USDT 現貨交易對中，24 小時漲幅最高的幣種。高漲幅也可能伴隨較高波動風險。">i</span></div>
+                    <p class="market-explainer">漲幅高表示過去 24 小時價格上升較多，不代表現在追買就會繼續漲。</p>
+                    <div class="market-table-wrap"><table class="market-table"><thead><tr><th># / 幣種</th><th>價格</th><th>24h 漲跌</th><th>成交額</th></tr></thead><tbody id="market-gainers-body"><tr><td colspan="4" class="muted">載入中…</td></tr></tbody></table></div>
+                </section>
+                <section class="market-rank-card">
+                    <div class="market-rank-heading"><h3>跌幅排行 Top 10</h3><span class="info-tip" title="顯示符合成交額門檻的 USDT 現貨交易對中，24 小時跌幅最大的幣種。跌得多不代表便宜，也可能繼續下跌。">i</span></div>
+                    <p class="market-explainer">用來找出弱勢幣種及市場風險，不要只因跌幅大就認為值得抄底。</p>
+                    <div class="market-table-wrap"><table class="market-table"><thead><tr><th># / 幣種</th><th>價格</th><th>24h 漲跌</th><th>成交額</th></tr></thead><tbody id="market-losers-body"><tr><td colspan="4" class="muted">載入中…</td></tr></tbody></table></div>
+                </section>
+            </div>
+            <div class="market-legend"><strong>名詞小抄</strong><ul><li><b>24h 漲跌：</b>現在價格相較約 24 小時前的變化百分比。</li><li><b>成交額：</b>24 小時內成交的總金額；不等於買方淨流入。</li><li><b>市場廣度：</b>觀察清單中上漲和下跌的分布，幫助判斷漲勢是否普遍。</li><li><b>波動風險：</b>漲幅榜或跌幅榜常有較大波動，排行不是投資建議。</li></ul></div>
         </section>
 
         <section class="card dca-panel feature-panel" id="dca-panel" data-feature-panel="dca" role="tabpanel" hidden>

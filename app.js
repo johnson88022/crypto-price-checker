@@ -526,6 +526,100 @@ if ("serviceWorker" in navigator) {
     });
 }
 
+// ==================== Market overview & beginner-friendly rankings ====================
+let marketOverviewLoadedAt = 0;
+let marketOverviewLoading = false;
+
+function formatCompactMoney(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return "—";
+    if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
+    if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+    if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+    return n.toFixed(0);
+}
+
+function formatMarketPrice(symbol, value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return "—";
+    if (n >= 1000) return n.toLocaleString("en-US", { maximumFractionDigits: 2 });
+    if (n >= 1) return n.toLocaleString("en-US", { maximumFractionDigits: 4 });
+    if (n >= 0.01) return n.toFixed(5);
+    return n.toFixed(8).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function renderMarketRankRows(elementId, rows) {
+    const tbody = document.getElementById(elementId);
+    if (!tbody) return;
+    if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="4" class="muted">目前沒有可顯示的數據</td></tr>';
+        return;
+    }
+    tbody.innerHTML = rows.map((row, index) => {
+        const pct = Number(row.priceChangePercent);
+        const pctClass = pct > 0 ? "market-up" : pct < 0 ? "market-down" : "market-flat";
+        return `<tr><td><span class="market-rank-number">${index + 1}</span><strong>${symbolLabel(row.symbol)}</strong></td><td class="market-number">${formatMarketPrice(row.symbol, row.lastPrice)}</td><td class="${pctClass} market-number">${formatPct(pct)}</td><td class="market-number">${formatCompactMoney(row.quoteVolume)}</td></tr>`;
+    }).join("");
+}
+
+async function loadMarketOverview(force = false) {
+    const status = document.getElementById("market-status");
+    if (marketOverviewLoading) return;
+    if (!force && Date.now() - marketOverviewLoadedAt < 30000) return;
+    marketOverviewLoading = true;
+    status.textContent = "正在向 Binance 取得 24 小時市場數據…";
+    status.classList.remove("error-text");
+    try {
+        const response = await fetch("https://api.binance.com/api/v3/ticker/24hr", { cache: "no-store" });
+        if (!response.ok) throw new Error(`Binance 回應 HTTP ${response.status}`);
+        const payload = await response.json();
+        if (!Array.isArray(payload)) throw new Error("收到的市場資料格式不正確");
+
+        const bySymbol = new Map(payload.filter(row => row && typeof row.symbol === "string").map(row => [row.symbol, row]));
+        const majorRows = TOP25_SYMBOLS.map(symbol => bySymbol.get(symbol)).filter(row => row && Number.isFinite(Number(row.priceChangePercent)));
+        const upCount = majorRows.filter(row => Number(row.priceChangePercent) > 0).length;
+        const downCount = majorRows.filter(row => Number(row.priceChangePercent) < 0).length;
+        const upRatio = majorRows.length ? (upCount / majorRows.length) * 100 : null;
+        const totalVolume = majorRows.reduce((sum, row) => sum + (Number(row.quoteVolume) || 0), 0);
+        document.getElementById("market-up-count").textContent = `${upCount} / ${majorRows.length}`;
+        document.getElementById("market-down-count").textContent = `${downCount} / ${majorRows.length}`;
+        document.getElementById("market-up-ratio").textContent = upRatio == null ? "—" : `${upRatio.toFixed(0)}%`;
+        document.getElementById("market-total-volume").textContent = `約 ${formatCompactMoney(totalVolume)} USDT`;
+
+        const tradableRows = payload.filter(row => isLikelySpotUsdtPair(row.symbol)
+            && Number(row.quoteVolume) >= 500000
+            && Number.isFinite(Number(row.priceChangePercent))
+            && Number.isFinite(Number(row.lastPrice))
+            && !/(UP|DOWN|BEAR|BULL)USDT$/.test(row.symbol));
+        const volumeTop = [...tradableRows].sort((a, b) => Number(b.quoteVolume) - Number(a.quoteVolume)).slice(0, 10);
+        const gainers = [...tradableRows].filter(row => Number(row.priceChangePercent) > 0)
+            .sort((a, b) => Number(b.priceChangePercent) - Number(a.priceChangePercent)).slice(0, 10);
+        const losers = [...tradableRows].filter(row => Number(row.priceChangePercent) < 0)
+            .sort((a, b) => Number(a.priceChangePercent) - Number(b.priceChangePercent)).slice(0, 10);
+        renderMarketRankRows("market-volume-body", volumeTop);
+        renderMarketRankRows("market-gainers-body", gainers);
+        renderMarketRankRows("market-losers-body", losers);
+
+        const tip = document.querySelector("#market-summary-tip span");
+        if (tip) {
+            if (upRatio == null) tip.textContent = "目前無法計算市場廣度，請稍後重新整理。";
+            else if (upRatio >= 70) tip.textContent = `觀察清單約 ${upRatio.toFixed(0)}% 上漲，漲勢目前較普遍；仍需留意價格是否已短線過熱。`;
+            else if (upRatio <= 30) tip.textContent = `觀察清單只有約 ${upRatio.toFixed(0)}% 上漲，市場偏弱；避免只因價格下跌就急著抄底。`;
+            else tip.textContent = `觀察清單約 ${upRatio.toFixed(0)}% 上漲，市場方向不算一致；可以再搭配成交額和個別幣種走勢判讀。`;
+        }
+        marketOverviewLoadedAt = Date.now();
+        status.textContent = `資料來源：Binance Spot · 更新於 ${formatUpdatedTime()} · 排行僅納入 24 小時成交額至少 500,000 USDT 的交易對`;
+    } catch (error) {
+        console.error("載入市場總覽失敗：", error);
+        status.textContent = "市場數據暫時無法取得。請稍後重試；若仍失敗，可能是網路或 Binance API 存取限制。";
+        status.classList.add("error-text");
+    } finally {
+        marketOverviewLoading = false;
+    }
+}
+
+document.getElementById("market-refresh-btn")?.addEventListener("click", () => loadMarketOverview(true));
+
 // Feature tabs keep the interface compact on desktop and mobile.
 function initFeatureTabs() {
     const tabs = [...document.querySelectorAll("[data-feature-tab]")];
@@ -538,7 +632,10 @@ function initFeatureTabs() {
         });
         panels.forEach(panel => { panel.hidden = panel.dataset.featurePanel !== name; });
     };
-    tabs.forEach(tab => tab.addEventListener("click", () => activate(tab.dataset.featureTab)));
+    tabs.forEach(tab => tab.addEventListener("click", () => {
+        activate(tab.dataset.featureTab);
+        if (tab.dataset.featureTab === "market") loadMarketOverview();
+    }));
     activate("live");
 }
 initFeatureTabs();
