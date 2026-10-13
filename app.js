@@ -165,17 +165,27 @@ const LIVE_CHANGE_INTERVALS = {
 };
 
 async function getBinanceIntervalChange(symbol, interval, currentPrice) {
+    // 從所選週期「目前這根 K 棒」的開盤價計算到即時成交價，確保顯示的是區間至現在漲跌。
     try {
         const url = new URL("https://api.binance.com/api/v3/klines");
         url.searchParams.set("symbol", symbol);
         url.searchParams.set("interval", interval);
         url.searchParams.set("limit", "1");
-        const response = await fetch(url, { cache: "no-store" });
+        const response = await fetch(url.toString(), { cache: "no-store" });
         const data = await response.json();
-        if (!response.ok || data?.code || !Array.isArray(data) || !data.length) return null;
+        if (!response.ok || data?.code || !Array.isArray(data) || !Array.isArray(data[0])) {
+            throw new Error(data?.msg || `K 線 API HTTP ${response.status}`);
+        }
         const periodOpen = Number(data[0][1]);
-        if (!(periodOpen > 0) || !(currentPrice > 0)) return null;
-        return ((currentPrice - periodOpen) / periodOpen) * 100;
+        let livePrice = Number(currentPrice);
+        if (!(livePrice > 0)) {
+            const priceResponse = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
+            const priceData = await priceResponse.json();
+            if (!priceResponse.ok || !(Number(priceData?.price) > 0)) throw new Error("即時價格暫時無法取得");
+            livePrice = Number(priceData.price);
+        }
+        if (!(periodOpen > 0) || !(livePrice > 0)) throw new Error("開盤價或現價無效");
+        return ((livePrice - periodOpen) / periodOpen) * 100;
     } catch (error) {
         console.warn(`無法取得 ${symbol} 區間漲跌幅`, error);
         return null;
@@ -586,7 +596,19 @@ function initFeatureTabs() {
     activate("live");
 }
 initFeatureTabs();
-document.getElementById("live-change-interval")?.addEventListener("change", () => updatePrices());
+document.getElementById("live-change-interval")?.addEventListener("change", async () => {
+    const label = document.getElementById("live-change-label");
+    const interval = document.getElementById("live-change-interval");
+    const selected = LIVE_CHANGE_INTERVALS[interval?.value] || LIVE_CHANGE_INTERVALS["15m"];
+    if (label) label.textContent = `${selected.label}至今漲跌幅`;
+    const cells = document.querySelectorAll(".live-period-change");
+    cells.forEach(cell => { cell.textContent = "計算中…"; cell.classList.remove("pct-up", "pct-down"); });
+    try { await updatePrices(); }
+    catch (error) {
+        console.error("更新區間漲跌幅失敗", error);
+        cells.forEach(cell => { cell.textContent = "載入失敗，請重試"; });
+    }
+});
 
 // ==================== DCA Return Calculator ====================
 function normalizeDcaSymbol(input) {
@@ -945,7 +967,7 @@ function populateDcaSymbolOptions(filter = "") {
         const label = symbolLabel(symbol);
         return `<button type="button" class="symbol-option" role="option" data-symbol="${label}"><strong>${label}</strong><span>USDT · 市值前 25</span></button>`;
     }).join("") || `<div class="symbol-options-empty">沒有符合的熱門幣種，可直接輸入自訂代號</div>`;
-    if (input && !input.value) input.value = "BTC";
+    // 不要在清空輸入框時自動補回 BTC；允許使用者自由編輯到空字串或單一字母。
 }
 
 function initDcaSymbolPicker() {
@@ -953,8 +975,8 @@ function initDcaSymbolPicker() {
     const list = document.getElementById("dca-symbol-options");
     const toggle = document.getElementById("dca-symbol-toggle");
     if (!input || !list || !toggle) return;
-    const open = () => {
-        populateDcaSymbolOptions(input.value);
+    const open = (filter = "") => {
+        populateDcaSymbolOptions(filter);
         list.hidden = false;
         input.setAttribute("aria-expanded", "true");
     };
@@ -962,10 +984,11 @@ function initDcaSymbolPicker() {
         list.hidden = true;
         input.setAttribute("aria-expanded", "false");
     };
-    input.addEventListener("focus", open);
-    input.addEventListener("click", open);
-    input.addEventListener("input", () => { open(); populateDcaSymbolOptions(input.value); });
-    toggle.addEventListener("click", () => list.hidden ? open() : close());
+    // 點入欄位先顯示完整熱門清單；只有使用者真的輸入文字時才依關鍵字篩選。
+    input.addEventListener("focus", () => open(""));
+    input.addEventListener("click", () => { if (list.hidden) open(""); });
+    input.addEventListener("input", () => open(input.value));
+    toggle.addEventListener("click", () => list.hidden ? open("") : close());
     list.addEventListener("click", event => {
         const option = event.target.closest("[data-symbol]");
         if (!option) return;
