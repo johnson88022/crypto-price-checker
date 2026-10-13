@@ -166,18 +166,30 @@ const LIVE_CHANGE_INTERVALS = {
 };
 
 async function getBinanceIntervalChange(symbol, interval, currentPrice) {
-    // 從所選週期「目前這根 K 棒」的開盤價計算到即時成交價，確保顯示的是區間至現在漲跌。
+    // 以「所選時間之前」的歷史價格為基準，計算滾動區間至目前即時價的漲跌幅。
+    const intervalMs = {
+        "15m": 15 * 60 * 1000,
+        "30m": 30 * 60 * 1000,
+        "1h": 60 * 60 * 1000,
+        "2h": 2 * 60 * 60 * 1000,
+        "4h": 4 * 60 * 60 * 1000,
+        "1d": 24 * 60 * 60 * 1000,
+        "1w": 7 * 24 * 60 * 60 * 1000,
+        "1M": 30 * 24 * 60 * 60 * 1000,
+    }[interval];
     try {
+        if (!intervalMs) throw new Error("不支援的觀察區間");
         const url = new URL("https://api.binance.com/api/v3/klines");
         url.searchParams.set("symbol", symbol);
-        url.searchParams.set("interval", interval);
+        url.searchParams.set("interval", "1m");
+        url.searchParams.set("startTime", String(Date.now() - intervalMs));
         url.searchParams.set("limit", "1");
         const response = await fetch(url.toString(), { cache: "no-store" });
         const data = await response.json();
         if (!response.ok || data?.code || !Array.isArray(data) || !Array.isArray(data[0])) {
             throw new Error(data?.msg || `K 線 API HTTP ${response.status}`);
         }
-        const periodOpen = Number(data[0][1]);
+        const referencePrice = Number(data[0][1]);
         let livePrice = Number(currentPrice);
         if (!(livePrice > 0)) {
             const priceResponse = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
@@ -185,8 +197,8 @@ async function getBinanceIntervalChange(symbol, interval, currentPrice) {
             if (!priceResponse.ok || !(Number(priceData?.price) > 0)) throw new Error("即時價格暫時無法取得");
             livePrice = Number(priceData.price);
         }
-        if (!(periodOpen > 0) || !(livePrice > 0)) throw new Error("開盤價或現價無效");
-        return ((livePrice - periodOpen) / periodOpen) * 100;
+        if (!(referencePrice > 0) || !(livePrice > 0)) throw new Error("歷史參考價或現價無效");
+        return ((livePrice - referencePrice) / referencePrice) * 100;
     } catch (error) {
         console.warn(`無法取得 ${symbol} 區間漲跌幅`, error);
         return null;
@@ -219,7 +231,7 @@ async function updatePrices() {
         if (price == null) failed += 1;
     });
     const label = document.getElementById("live-change-label");
-    if (label) label.textContent = `${selected.label}至今漲跌`;
+    if (label) label.textContent = `${selected.label}至今漲跌幅（%）`;
     return failed;
 }
 
@@ -603,7 +615,7 @@ document.getElementById("live-change-interval")?.addEventListener("change", asyn
     const label = document.getElementById("live-change-label");
     const interval = document.getElementById("live-change-interval");
     const selected = LIVE_CHANGE_INTERVALS[interval?.value] || LIVE_CHANGE_INTERVALS["15m"];
-    if (label) label.textContent = `${selected.label}至今漲跌幅`;
+    if (label) label.textContent = `${selected.label}至今漲跌幅（%）`;
     const cells = document.querySelectorAll(".live-period-change");
     cells.forEach(cell => { cell.textContent = "計算中…"; cell.classList.remove("pct-up", "pct-down"); });
     try { await updatePrices(); }
