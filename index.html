@@ -36,15 +36,29 @@
             </div>
         </header>
 
+        <nav class="feature-tabs" role="tablist" aria-label="功能切換">
+            <button type="button" class="feature-tab active" data-feature-tab="live" role="tab" aria-selected="true">即時報價</button>
+            <button type="button" class="feature-tab" data-feature-tab="dca" role="tab" aria-selected="false">定投報酬</button>
+            <button type="button" class="feature-tab" data-feature-tab="kline" role="tab" aria-selected="false">K 棒漲跌幅</button>
+        </nav>
+
         <div id="app-status" class="app-status" role="status" aria-live="polite">
             <span id="loading-indicator" class="loading-dot" hidden></span>
             <span id="app-status-text">準備載入…</span>
         </div>
 
-        <section class="card live-prices">
+        <section class="card live-prices feature-panel" data-feature-panel="live" role="tabpanel">
             <div class="section-heading">
                 <h2 class="section-title">即時報價</h2>
                 <span id="last-updated" class="last-updated">尚未更新</span>
+            </div>
+            <div class="live-interval-control form-row">
+                <label for="live-change-interval">漲跌幅觀察區間</label>
+                <select id="live-change-interval">
+                    <option value="15m" selected>15 MIN</option><option value="30m">30 MIN</option>
+                    <option value="1h">1 HR</option><option value="2h">2 HR</option><option value="4h">4 HR</option>
+                    <option value="1d">1 Day</option><option value="1w">1 Week</option><option value="1M">1 Month</option>
+                </select>
             </div>
             <div class="price-table-wrap">
                 <table class="price-table">
@@ -52,16 +66,17 @@
                         <tr>
                             <th>幣種</th>
                             <th>Binance Spot</th>
+                            <th id="live-change-label">15 分鐘漲跌幅（從本區間開盤價至現價）</th>
                         </tr>
                     </thead>
                     <tbody id="live-price-body">
-                        <tr><td colspan="2" class="muted">載入中…</td></tr>
+                        <tr><td colspan="3" class="muted">載入中…</td></tr>
                     </tbody>
                 </table>
             </div>
         </section>
 
-        <section class="card dca-panel" id="dca-panel">
+        <section class="card dca-panel feature-panel" id="dca-panel" data-feature-panel="dca" role="tabpanel" hidden>
             <div class="section-heading">
                 <div>
                     <h2 class="section-title">定投報酬</h2>
@@ -71,9 +86,10 @@
 
             <div class="dca-grid">
                 <div class="form-row">
-                    <label for="dca-symbol-select">幣種（幣安市值前 10 或自訂）</label>
-                    <select id="dca-symbol-select" aria-label="選擇定投幣種"></select>
-                    <input type="text" id="dca-symbol-custom" placeholder="輸入自訂幣種，例如 WIF" autocomplete="off" autocapitalize="characters" hidden>
+                    <label for="dca-symbol-input">幣種（幣安市值前 25 或直接輸入自訂幣種）</label>
+                    <input type="text" id="dca-symbol-input" list="dca-symbol-options" placeholder="輸入 BTC、ETH、WIF…" autocomplete="off" autocapitalize="characters" value="BTC">
+                    <datalist id="dca-symbol-options"></datalist>
+                    <small class="field-help">可點選市值前 25 大幣種，也可直接輸入其他 Binance USDT 現貨幣種。</small>
                 </div>
                 <div class="form-row">
                     <label for="dca-start">開始時間</label>
@@ -136,9 +152,9 @@
             </div>
         </section>
 
-        <section class="card kline-panel">
+        <section class="card kline-panel feature-panel" data-feature-panel="kline" role="tabpanel" hidden>
             <h2 class="section-title">K 棒漲跌幅至現價</h2>
-            <p class="section-hint">含 Binance 上架幣種市值前 10、漲幅前 15、跌幅前 15，以及您自填的幣種（USDT 現貨）</p>
+            <p class="section-hint">含 Binance 上架幣種市值前 25、漲幅前 15、跌幅前 15，以及您自填的幣種（USDT 現貨）</p>
 
             <div class="form-row">
                 <label for="kline-interval">K 週期</label>

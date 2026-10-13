@@ -1,9 +1,12 @@
-const LIVE_SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "PEPEUSDT", "ADAUSDT", "SUIUSDT"];
+let LIVE_SYMBOLS = [];
 
-/** Binance USDT 現貨市值前十；執行時會優先依 CoinGecko 市值排名過濾 Binance 上架交易對，失敗時使用此備援清單。 */
-let TOP10_SYMBOLS = [
+/** Binance USDT 現貨市值前25；執行時會優先依 CoinGecko 市值排名過濾 Binance 上架交易對，失敗時使用此備援清單。 */
+let TOP25_SYMBOLS = [
     "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
-    "DOGEUSDT", "ADAUSDT", "TRXUSDT", "AVAXUSDT", "LINKUSDT"
+    "DOGEUSDT", "ADAUSDT", "TRXUSDT", "AVAXUSDT", "LINKUSDT",
+    "TONUSDT", "SHIBUSDT", "DOTUSDT", "BCHUSDT", "NEARUSDT",
+    "POLUSDT", "LTCUSDT", "UNIUSDT", "ICPUSDT", "APTUSDT",
+    "ETCUSDT", "FILUSDT", "ATOMUSDT", "RENDERUSDT", "ARBUSDT"
 ];
 
 const TOP_MOVER_COUNT = 15;
@@ -18,6 +21,9 @@ const KLINE_INTERVAL_MS = {
     "4h": 4 * 60 * 60 * 1000,
     "1d": 24 * 60 * 60 * 1000,
     "1w": 7 * 24 * 60 * 60 * 1000,
+    "30m": 30 * 60 * 1000,
+    "2h": 2 * 60 * 60 * 1000,
+    "1M": 30 * 24 * 60 * 60 * 1000,
 };
 
 function symbolLabel(symbol) {
@@ -139,26 +145,70 @@ async function getOkxPrice(symbol) {
 
 function renderLivePriceTable() {
     const tbody = document.getElementById("live-price-body");
-    tbody.innerHTML = LIVE_SYMBOLS.map(
-        (symbol) => `
+    tbody.innerHTML = LIVE_SYMBOLS.map((symbol) => `
         <tr>
             <td class="sym">${symbolLabel(symbol)}</td>
             <td id="${symbol.toLowerCase()}-binance">…</td>
-        </tr>`
-    ).join("");
+            <td id="${symbol.toLowerCase()}-change">…</td>
+        </tr>`).join("");
+}
+
+const LIVE_CHANGE_INTERVALS = {
+    "15m": { label: "15 分鐘", api: "15m" },
+    "30m": { label: "30 分鐘", api: "30m" },
+    "1h": { label: "1 小時", api: "1h" },
+    "2h": { label: "2 小時", api: "2h" },
+    "4h": { label: "4 小時", api: "4h" },
+    "1d": { label: "1 天", api: "1d" },
+    "1w": { label: "1 週", api: "1w" },
+    "1M": { label: "1 個月", api: "1M" },
+};
+
+async function getBinanceIntervalChange(symbol, interval, currentPrice) {
+    try {
+        const url = new URL("https://api.binance.com/api/v3/klines");
+        url.searchParams.set("symbol", symbol);
+        url.searchParams.set("interval", interval);
+        url.searchParams.set("limit", "1");
+        const response = await fetch(url, { cache: "no-store" });
+        const data = await response.json();
+        if (!response.ok || data?.code || !Array.isArray(data) || !data.length) return null;
+        const periodOpen = Number(data[0][1]);
+        if (!(periodOpen > 0) || !(currentPrice > 0)) return null;
+        return ((currentPrice - periodOpen) / periodOpen) * 100;
+    } catch (error) {
+        console.warn(`無法取得 ${symbol} 區間漲跌幅`, error);
+        return null;
+    }
 }
 
 async function updatePrices() {
+    const interval = document.getElementById("live-change-interval")?.value || "15m";
+    const selected = LIVE_CHANGE_INTERVALS[interval] || LIVE_CHANGE_INTERVALS["15m"];
+    const priceMap = await fetchAllBinancePrices();
+    const changes = new Map();
+    const chunks = await mapInChunks(LIVE_SYMBOLS, 8, async (symbol) => ({
+        symbol,
+        change: await getBinanceIntervalChange(symbol, selected.api, priceMap.get(symbol)),
+    }));
+    chunks.forEach(item => changes.set(item.symbol, item.change));
     let failed = 0;
-    await Promise.all(
-        LIVE_SYMBOLS.map(async (symbol) => {
-            const b = document.getElementById(`${symbol.toLowerCase()}-binance`);
-            if (!b) return;
-            const binance = await getBinancePrice(symbol);
-            b.textContent = binance;
-            if (binance === "—") failed += 1;
-        })
-    );
+    LIVE_SYMBOLS.forEach(symbol => {
+        const priceCell = document.getElementById(`${symbol.toLowerCase()}-binance`);
+        const changeCell = document.getElementById(`${symbol.toLowerCase()}-change`);
+        const price = priceMap.get(symbol);
+        const change = changes.get(symbol);
+        if (priceCell) priceCell.textContent = price == null ? "—" : formatPrice(symbol, price);
+        if (changeCell) {
+            changeCell.textContent = change == null ? "—" : formatPct(change);
+            changeCell.classList.toggle("pct-up", change != null && change >= 0);
+            changeCell.classList.toggle("pct-down", change != null && change < 0);
+            changeCell.title = `Binance ${selected.label} 區間漲跌幅`;
+        }
+        if (price == null) failed += 1;
+    });
+    const label = document.getElementById("live-change-label");
+    if (label) label.textContent = `${selected.label}漲跌幅（從本區間開盤價至現價）`;
     return failed;
 }
 
@@ -258,8 +308,8 @@ function addSymbolTag(tagMap, symbol, tag) {
 
 function renderTagBadges(tags) {
     if (!tags || !tags.size) return "—";
-    const order = ["市值前10", "漲幅", "跌幅", "自訂"];
-    const labels = { "市值前10": "tag-cap", 漲幅: "tag-up", 跌幅: "tag-down", 自訂: "tag-custom" };
+    const order = ["市值前25", "漲幅", "跌幅", "自訂"];
+    const labels = { "市值前25": "tag-cap", 漲幅: "tag-up", 跌幅: "tag-down", 自訂: "tag-custom" };
     return [...tags]
         .sort((a, b) => order.indexOf(a) - order.indexOf(b))
         .map((tag) => `<span class="tag ${labels[tag] || ""}">${tag}</span>`)
@@ -356,7 +406,7 @@ function initKlineDateTimePickers() {
     timeInput.value = `${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
 }
 
-async function resolveBinanceTop10ByMarketCap() {
+async function resolveBinanceTop25ByMarketCap() {
     try {
         const [exchangeResponse, marketResponse] = await Promise.all([
             fetch("https://api.binance.com/api/v3/exchangeInfo"),
@@ -371,13 +421,13 @@ async function resolveBinanceTop10ByMarketCap() {
         const matched = markets
             .filter(c => c.symbol && listed.has(c.symbol.toUpperCase()) && Number.isFinite(Number(c.market_cap)))
             .sort((a, b) => Number(b.market_cap) - Number(a.market_cap))
-            .slice(0, 10)
+            .slice(0, 25)
             .map(c => `${c.symbol.toUpperCase()}USDT`);
-        if (matched.length >= 8) TOP10_SYMBOLS = matched;
+        if (matched.length >= 20) TOP25_SYMBOLS = matched;
     } catch (error) {
-        console.warn("無法更新市值前十，使用備援清單：", error);
+        console.warn("無法更新市值前25，使用備援清單：", error);
     }
-    return TOP10_SYMBOLS;
+    return TOP25_SYMBOLS;
 }
 
 async function queryKlineChangeToNow() {
@@ -394,14 +444,14 @@ async function queryKlineChangeToNow() {
 
     const customSymbols = parseCustomSymbols(customRaw);
     metaEl.classList.remove("error-text");
-    metaEl.textContent = "查詢中…（Binance 上架幣種市值前 10＋漲幅 15＋跌幅 15＋自訂）";
+    metaEl.textContent = "查詢中…（Binance 上架幣種市值前 25＋漲幅 15＋跌幅 15＋自訂）";
     document.getElementById("kline-compare-table").hidden = true;
 
     try {
-        await resolveBinanceTop10ByMarketCap();
+        await resolveBinanceTop25ByMarketCap();
         populateDcaSymbolOptions();
         const priceMap = await fetchAllBinancePrices();
-        const seedSymbols = [...new Set([...TOP10_SYMBOLS, ...customSymbols])];
+        const seedSymbols = [...new Set([...TOP25_SYMBOLS, ...customSymbols])];
 
         metaEl.textContent = "掃描漲幅／跌幅榜中…";
         const { gainerSymbols, loserSymbols, cache: moverCache } = await resolveTopMoverSymbols(
@@ -412,13 +462,13 @@ async function queryKlineChangeToNow() {
         );
 
         const tagMap = new Map();
-        TOP10_SYMBOLS.forEach((s) => addSymbolTag(tagMap, s, "市值前10"));
+        TOP25_SYMBOLS.forEach((s) => addSymbolTag(tagMap, s, "市值前25"));
         customSymbols.forEach((s) => addSymbolTag(tagMap, s, "自訂"));
         gainerSymbols.forEach((s) => addSymbolTag(tagMap, s, "漲幅"));
         loserSymbols.forEach((s) => addSymbolTag(tagMap, s, "跌幅"));
 
         const allSymbols = [
-            ...new Set([...TOP10_SYMBOLS, ...customSymbols, ...gainerSymbols, ...loserSymbols]),
+            ...new Set([...TOP25_SYMBOLS, ...customSymbols, ...gainerSymbols, ...loserSymbols]),
         ];
         const rowCache = new Map(moverCache);
 
@@ -438,7 +488,7 @@ async function queryKlineChangeToNow() {
                 <span class="meta-strong">${interval} K</span>
                 · ${formatKlineTime(sample.openTime)} ～ ${formatKlineTime(sample.closeTime)}
                 · 基準：該 K 收盤 → 現價
-                · 共 ${allSymbols.length} 檔（市值前 10＋漲 ${gainerSymbols.length}＋跌 ${loserSymbols.length}${customSymbols.length ? `＋自訂 ${customSymbols.length}` : ""}）
+                · 共 ${allSymbols.length} 檔（市值前25＋漲 ${gainerSymbols.length}＋跌 ${loserSymbols.length}${customSymbols.length ? `＋自訂 ${customSymbols.length}` : ""}）
                 ${customLabel ? ` · 高亮：<span class="meta-strong">${customLabel}</span>` : ""}
             `;
         } else {
@@ -500,12 +550,17 @@ refreshButton.addEventListener("click", refreshWebApp);
 
 initKlineDateTimePickers();
 renderLivePriceTable();
-resolveBinanceTop10ByMarketCap().then(populateDcaSymbolOptions);
-refreshWebApp();
+resolveBinanceTop25ByMarketCap().then(() => {
+    LIVE_SYMBOLS = [...TOP25_SYMBOLS];
+    populateDcaSymbolOptions();
+    renderLivePriceTable();
+    refreshWebApp();
+});
 
+// 更新頻率適度放慢，避免 25 個幣種的價格與 K 線請求過於密集。
 setInterval(() => {
-    if (!document.hidden) refreshWebApp();
-}, 5000);
+    if (!document.hidden && LIVE_SYMBOLS.length) refreshWebApp();
+}, 30000);
 
 if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
@@ -514,6 +569,24 @@ if ("serviceWorker" in navigator) {
             .catch((error) => console.error("Service Worker registration failed:", error));
     });
 }
+
+// Feature tabs keep the interface compact on desktop and mobile.
+function initFeatureTabs() {
+    const tabs = [...document.querySelectorAll("[data-feature-tab]")];
+    const panels = [...document.querySelectorAll("[data-feature-panel]")];
+    const activate = (name) => {
+        tabs.forEach(tab => {
+            const active = tab.dataset.featureTab === name;
+            tab.classList.toggle("active", active);
+            tab.setAttribute("aria-selected", String(active));
+        });
+        panels.forEach(panel => { panel.hidden = panel.dataset.featurePanel !== name; });
+    };
+    tabs.forEach(tab => tab.addEventListener("click", () => activate(tab.dataset.featureTab)));
+    activate("live");
+}
+initFeatureTabs();
+document.getElementById("live-change-interval")?.addEventListener("change", () => updatePrices());
 
 // ==================== DCA Return Calculator ====================
 function normalizeDcaSymbol(input) {
@@ -670,9 +743,7 @@ async function calculateDcaReturn() {
     const status = document.getElementById("dca-status");
     const result = document.getElementById("dca-result");
     const untilNow = document.getElementById("dca-until-now").checked;
-    const selectedSymbol = document.getElementById("dca-symbol-select").value;
-    const customSymbolInput = document.getElementById("dca-symbol-custom");
-    const symbol = normalizeDcaSymbol(selectedSymbol === "CUSTOM" ? customSymbolInput.value : selectedSymbol);
+    const symbol = normalizeDcaSymbol(document.getElementById("dca-symbol-input").value);
     const startDate = parseDateInput(document.getElementById("dca-start").value);
     const frequency = document.getElementById("dca-frequency").value;
     const amount = Number(document.getElementById("dca-amount").value);
@@ -865,12 +936,11 @@ async function calculateDcaReturn() {
 }
 
 function populateDcaSymbolOptions() {
-    const select = document.getElementById("dca-symbol-select");
-    const previous = select.value || "BTCUSDT";
-    select.innerHTML = TOP10_SYMBOLS.map(symbol => `<option value="${symbol}">${symbolLabel(symbol)} / USDT</option>`).join("")
-        + '<option value="CUSTOM">自訂幣種…</option>';
-    select.value = TOP10_SYMBOLS.includes(previous) ? previous : "BTCUSDT";
-    if (!TOP10_SYMBOLS.includes(select.value)) select.selectedIndex = 0;
+    const list = document.getElementById("dca-symbol-options");
+    if (!list) return;
+    list.innerHTML = TOP25_SYMBOLS.map(symbol => `<option value="${symbolLabel(symbol)}">${symbolLabel(symbol)} / USDT（市值前25）</option>`).join("");
+    const input = document.getElementById("dca-symbol-input");
+    if (input && !input.value) input.value = "BTC";
 }
 
 function initDcaInputs() {
@@ -886,12 +956,6 @@ function initDcaInputs() {
 
     untilNow.addEventListener("change", () => {
         end.disabled = untilNow.checked;
-    });
-    const symbolSelect = document.getElementById("dca-symbol-select");
-    const customSymbol = document.getElementById("dca-symbol-custom");
-    symbolSelect.addEventListener("change", () => {
-        customSymbol.hidden = symbolSelect.value !== "CUSTOM";
-        if (symbolSelect.value === "CUSTOM") customSymbol.focus();
     });
     end.disabled = true;
     populateDcaSymbolOptions();

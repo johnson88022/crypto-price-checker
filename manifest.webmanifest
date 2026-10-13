@@ -1,7 +1,7 @@
 {
   "name": "Crypto Price Checker",
   "short_name": "Crypto Price",
-  "description": "Crypto Price Checker — Binance、OKX 即時幣價與 K 棒漲跌幅查詢",
+  "description": "Crypto Price Checker — Binance 市值前 25 即時幣價、區間漲跌幅與定投報酬查詢",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

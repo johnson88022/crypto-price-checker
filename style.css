@@ -1169,3 +1169,59 @@ body {
     .price-table th:nth-child(2), .price-table td:nth-child(2) { width: 68%; }
     .price-table td { font-size: 12px; padding: 10px 7px; }
 }
+
+
+/* Compact feature navigation: keep each major tool on its own tab instead of a long scrolling page. */
+.feature-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    padding: 6px;
+    border: 1px solid var(--border, rgba(255,255,255,.12));
+    border-radius: 14px;
+    background: rgba(255,255,255,.035);
+    position: sticky;
+    top: 8px;
+    z-index: 20;
+    backdrop-filter: blur(12px);
+}
+.feature-tab {
+    min-width: 0;
+    padding: 11px 8px;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    color: var(--text-muted, #aab4c0);
+    background: transparent;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background .18s ease, color .18s ease, border-color .18s ease;
+}
+.feature-tab.active {
+    color: var(--text-primary, #f4f7fb);
+    background: rgba(240,185,11,.13);
+    border-color: rgba(240,185,11,.35);
+}
+.feature-panel[hidden] { display: none !important; }
+.feature-panel { min-width: 0; }
+.live-interval-control {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 4px 0 12px;
+}
+.live-interval-control label { margin: 0; }
+.live-interval-control select { width: min(44%, 180px); }
+#dca-symbol-input, #dca-symbol-options { width: 100%; min-width: 0; }
+.field-help { display: block; margin-top: 5px; color: var(--text-muted, #aab4c0); font-size: 11px; line-height: 1.5; }
+.price-table td.pct-up { color: var(--up, #16c784); font-weight: 750; }
+.price-table td.pct-down { color: var(--down, #ea3943); font-weight: 750; }
+@media (max-width: 480px) {
+    .feature-tabs { gap: 4px; padding: 4px; top: 4px; }
+    .feature-tab { padding: 10px 4px; font-size: 12px; }
+    .live-interval-control { align-items: stretch; flex-direction: column; gap: 6px; }
+    .live-interval-control select { width: 100%; }
+}
