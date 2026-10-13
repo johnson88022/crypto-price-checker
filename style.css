@@ -1287,3 +1287,32 @@ body {
     .market-table { min-width: 420px; }
     .market-heading { flex-direction: column; }
 }
+
+/* Market intelligence and user-configurable observation universe */
+.market-settings { display: grid; grid-template-columns: minmax(0, 1fr) 150px auto; align-items: end; gap: 10px; padding: 12px; border: 1px solid var(--border, #39424d); border-radius: 12px; background: rgba(255,255,255,.025); }
+.market-setting-field { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.market-setting-field label { color: var(--text-primary, #f4f7fb); font-size: 12px; font-weight: 750; }
+.market-setting-field textarea, .market-setting-field input { width: 100%; min-width: 0; box-sizing: border-box; border: 1px solid var(--border, #39424d); border-radius: 8px; padding: 9px 10px; color: var(--text-primary, #f4f7fb); background: var(--surface-2, #242b33); font: inherit; font-size: 12px; }
+.market-setting-field textarea { min-height: 58px; resize: vertical; line-height: 1.5; }
+.market-setting-field small { color: var(--text-muted, #aab4c0); font-size: 10px; line-height: 1.45; }
+.market-insight-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
+.market-insight-card { min-width: 0; display: flex; flex-direction: column; gap: 7px; padding: 12px; border: 1px solid var(--border, #39424d); border-radius: 12px; background: rgba(255,255,255,.025); }
+.insight-kicker { color: var(--text-muted, #aab4c0); font-size: 11px; font-weight: 700; }
+.market-insight-card > strong { color: var(--text-primary, #f4f7fb); font-size: clamp(15px, 1.8vw, 21px); line-height: 1.25; overflow-wrap: anywhere; }
+.market-insight-card p { margin: 0; color: var(--text-muted, #aab4c0); font-size: 11px; line-height: 1.55; }
+.market-observations { padding: 12px; border: 1px solid var(--border, #39424d); border-radius: 12px; background: rgba(255,255,255,.018); }
+.market-observations .market-explainer { min-height: 0; margin-bottom: 8px; }
+.market-observation-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+.market-observation-list li { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 10px; border-radius: 9px; background: rgba(255,255,255,.035); border-left: 3px solid var(--border, #39424d); }
+.market-observation-list li strong { color: var(--text-primary, #f4f7fb); font-size: 12px; }
+.market-observation-list li span { color: var(--text-muted, #aab4c0); font-size: 11px; line-height: 1.55; }
+.market-observation-list .observation-positive { border-left-color: var(--up, #16c784); }
+.market-observation-list .observation-warning { border-left-color: var(--down, #ea3943); }
+.market-observation-list .observation-neutral { border-left-color: var(--accent, #f0b90b); }
+@media (max-width: 720px) {
+  .market-settings { grid-template-columns: minmax(0, 1fr) 92px; }
+  .market-symbol-field { grid-column: 1 / -1; }
+  .market-settings > button { grid-column: 1 / -1; width: 100%; }
+  .market-insight-grid { grid-template-columns: minmax(0, 1fr); }
+  .market-observation-list { grid-template-columns: minmax(0, 1fr); }
+}

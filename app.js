@@ -526,9 +526,11 @@ if ("serviceWorker" in navigator) {
     });
 }
 
-// ==================== Market overview & beginner-friendly rankings ====================
+// ==================== Market overview: configurable universe + actionable insights ====================
 let marketOverviewLoadedAt = 0;
 let marketOverviewLoading = false;
+let marketRankCount = 10;
+let marketCustomSymbols = [];
 
 function formatCompactMoney(value) {
     const n = Number(value);
@@ -548,11 +550,61 @@ function formatMarketPrice(symbol, value) {
     return n.toFixed(8).replace(/0+$/, "").replace(/\.$/, "");
 }
 
+function parseMarketSymbols(raw) {
+    const seen = new Set();
+    return String(raw || "").split(/[\s,，;；]+/).map(value => value.trim().toUpperCase())
+        .filter(Boolean).map(value => value.endsWith("USDT") ? value : `${value}USDT`)
+        .filter(value => /^[A-Z0-9]{2,14}USDT$/.test(value) && !/(UP|DOWN|BEAR|BULL)USDT$/.test(value))
+        .filter(value => !seen.has(value) && seen.add(value));
+}
+
+function readMarketSettings() {
+    try {
+        const savedSymbols = localStorage.getItem("cpc_market_custom_symbols");
+        const savedCount = Number(localStorage.getItem("cpc_market_rank_count"));
+        marketCustomSymbols = savedSymbols ? parseMarketSymbols(savedSymbols) : [];
+        marketRankCount = Number.isFinite(savedCount) && savedCount >= 3 && savedCount <= 30 ? Math.round(savedCount) : 10;
+    } catch (_) {
+        marketCustomSymbols = [];
+        marketRankCount = 10;
+    }
+    const symbolInput = document.getElementById("market-symbol-input");
+    const countInput = document.getElementById("market-rank-count");
+    if (symbolInput) symbolInput.value = marketCustomSymbols.map(s => s.replace(/USDT$/, "")).join(", ");
+    if (countInput) countInput.value = String(marketRankCount);
+}
+
+function applyMarketSettings() {
+    const raw = document.getElementById("market-symbol-input")?.value || "";
+    const parsed = parseMarketSymbols(raw);
+    if (raw.trim() && !parsed.length) {
+        const status = document.getElementById("market-status");
+        status.textContent = "沒有辨識到有效幣種。請輸入 BTC、ETH、SOL 等幣名，並以逗號或換行分隔。";
+        status.classList.add("error-text");
+        return;
+    }
+    const countRaw = Number(document.getElementById("market-rank-count")?.value || 10);
+    if (!Number.isFinite(countRaw) || countRaw < 3 || countRaw > 30) {
+        const status = document.getElementById("market-status");
+        status.textContent = "排行數量請設定在 3 到 30 之間。";
+        status.classList.add("error-text");
+        return;
+    }
+    marketCustomSymbols = parsed;
+    marketRankCount = Math.round(countRaw);
+    try {
+        localStorage.setItem("cpc_market_custom_symbols", marketCustomSymbols.join(","));
+        localStorage.setItem("cpc_market_rank_count", String(marketRankCount));
+    } catch (_) { /* Private browsing may block local storage; settings still work for this page session. */ }
+    marketOverviewLoadedAt = 0;
+    loadMarketOverview(true);
+}
+
 function renderMarketRankRows(elementId, rows) {
     const tbody = document.getElementById(elementId);
     if (!tbody) return;
     if (!rows.length) {
-        tbody.innerHTML = '<tr><td colspan="4" class="muted">目前沒有可顯示的數據</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="4" class="muted">目前觀察清單沒有足夠數據</td></tr>';
         return;
     }
     tbody.innerHTML = rows.map((row, index) => {
@@ -560,6 +612,49 @@ function renderMarketRankRows(elementId, rows) {
         const pctClass = pct > 0 ? "market-up" : pct < 0 ? "market-down" : "market-flat";
         return `<tr><td><span class="market-rank-number">${index + 1}</span><strong>${symbolLabel(row.symbol)}</strong></td><td class="market-number">${formatMarketPrice(row.symbol, row.lastPrice)}</td><td class="${pctClass} market-number">${formatPct(pct)}</td><td class="market-number">${formatCompactMoney(row.quoteVolume)}</td></tr>`;
     }).join("");
+}
+
+function setMarketInsight(id, value, note) {
+    const valueNode = document.getElementById(`market-insight-${id}`);
+    const noteNode = document.getElementById(`market-insight-${id}-note`);
+    if (valueNode) valueNode.textContent = value;
+    if (noteNode) noteNode.textContent = note;
+}
+
+function getMarketRangePosition(row) {
+    const low = Number(row.lowPrice);
+    const high = Number(row.highPrice);
+    const price = Number(row.lastPrice);
+    if (![low, high, price].every(Number.isFinite) || high <= low) return null;
+    return Math.max(0, Math.min(100, ((price - low) / (high - low)) * 100));
+}
+
+function buildMarketObservations(rows, upRatio, medianChange, concentration) {
+    const list = document.getElementById("market-observation-list");
+    if (!list) return;
+    const messages = [];
+    if (upRatio >= 70) messages.push({ title: "漲勢擴散", text: `觀察清單有 ${upRatio.toFixed(0)}% 幣種上漲，漲勢較普遍；仍要確認是否由少數高漲幅幣種拉動。`, type: "positive" });
+    else if (upRatio <= 30) messages.push({ title: "弱勢範圍較廣", text: `只有 ${upRatio.toFixed(0)}% 幣種上漲，跌勢較普遍。這不是立即抄底的理由，先留意是否止跌。`, type: "warning" });
+    else messages.push({ title: "市場方向分歧", text: `上漲比例 ${upRatio.toFixed(0)}%，多空尚未形成明顯一致方向；可比較個別幣種強弱。`, type: "neutral" });
+
+    if (Number.isFinite(medianChange)) {
+        if (medianChange > 1) messages.push({ title: "典型幣種偏強", text: `漲跌幅中位數為 +${medianChange.toFixed(2)}%。一半幣種高於此值、一半低於此值，較不容易被單一暴漲幣種誤導。`, type: "positive" });
+        else if (medianChange < -1) messages.push({ title: "典型幣種偏弱", text: `漲跌幅中位數為 ${medianChange.toFixed(2)}%，代表觀察清單中間位置的幣種也偏弱，而不只是少數幣下跌。`, type: "warning" });
+        else messages.push({ title: "整體變動有限", text: `漲跌幅中位數為 ${formatPct(medianChange)}，典型幣種的 24 小時變化相對溫和。`, type: "neutral" });
+    }
+    if (concentration >= 60) messages.push({ title: "成交活躍度集中", text: `前三大成交額占觀察清單約 ${concentration.toFixed(0)}%。整體成交額可能主要由少數幣種貢獻，不能視為所有幣都活躍。`, type: "warning" });
+    else messages.push({ title: "成交分布較分散", text: `前三大幣種占成交額約 ${concentration.toFixed(0)}%，觀察清單的交易活躍度沒有過度集中在前三名。`, type: "neutral" });
+
+    const highVol = rows.filter(row => Math.abs(Number(row.priceChangePercent)) >= 8)
+        .sort((a, b) => Math.abs(Number(b.priceChangePercent)) - Math.abs(Number(a.priceChangePercent))).slice(0, 3);
+    highVol.forEach(row => messages.push({ title: `${symbolLabel(row.symbol)} 波動偏大`, text: `24 小時變動 ${formatPct(Number(row.priceChangePercent))}。大幅波動可能伴隨快速回撤，避免只因排行靠前就追價。`, type: "warning" }));
+
+    const strength = rows.filter(row => Number(row.priceChangePercent) >= 2 && (getMarketRangePosition(row) ?? 0) >= 70 && Number(row.quoteVolume) >= 1000000)
+        .sort((a, b) => Number(b.priceChangePercent) - Number(a.priceChangePercent)).slice(0, 3);
+    strength.forEach(row => messages.push({ title: `${symbolLabel(row.symbol)} 動能值得追蹤`, text: `24 小時漲幅 ${formatPct(Number(row.priceChangePercent))}，現價位於當日高低區間約 ${(getMarketRangePosition(row) || 0).toFixed(0)}% 位置，且成交額達 ${formatCompactMoney(Number(row.quoteVolume))} USDT。這表示目前偏強，不代表後續必漲。`, type: "positive" }));
+
+    if (messages.length < 4) messages.push({ title: "下一步怎麼看", text: "先觀察市場廣度是否延續，再確認個別幣種的漲幅、當日區間位置及成交額是否相互支持。此頁只有 24 小時快照，不能單靠它判定趨勢反轉。", type: "neutral" });
+    list.innerHTML = messages.slice(0, 7).map(item => `<li class="observation-${item.type}"><strong>${item.title}</strong><span>${item.text}</span></li>`).join("");
 }
 
 async function loadMarketOverview(force = false) {
@@ -576,49 +671,64 @@ async function loadMarketOverview(force = false) {
         if (!Array.isArray(payload)) throw new Error("收到的市場資料格式不正確");
 
         const bySymbol = new Map(payload.filter(row => row && typeof row.symbol === "string").map(row => [row.symbol, row]));
-        const majorRows = TOP25_SYMBOLS.map(symbol => bySymbol.get(symbol)).filter(row => row && Number.isFinite(Number(row.priceChangePercent)));
-        const upCount = majorRows.filter(row => Number(row.priceChangePercent) > 0).length;
-        const downCount = majorRows.filter(row => Number(row.priceChangePercent) < 0).length;
-        const upRatio = majorRows.length ? (upCount / majorRows.length) * 100 : null;
-        const totalVolume = majorRows.reduce((sum, row) => sum + (Number(row.quoteVolume) || 0), 0);
-        document.getElementById("market-up-count").textContent = `${upCount} / ${majorRows.length}`;
-        document.getElementById("market-down-count").textContent = `${downCount} / ${majorRows.length}`;
-        document.getElementById("market-up-ratio").textContent = upRatio == null ? "—" : `${upRatio.toFixed(0)}%`;
-        document.getElementById("market-total-volume").textContent = `約 ${formatCompactMoney(totalVolume)} USDT`;
+        const selectedSymbols = marketCustomSymbols.length ? marketCustomSymbols : TOP25_SYMBOLS;
+        const missingSymbols = selectedSymbols.filter(symbol => !bySymbol.has(symbol));
+        const observedRows = selectedSymbols.map(symbol => bySymbol.get(symbol)).filter(row => row
+            && Number.isFinite(Number(row.priceChangePercent)) && Number.isFinite(Number(row.lastPrice)));
+        if (!observedRows.length) throw new Error("自訂清單沒有找到有效的 Binance USDT 現貨交易對，請確認幣名是否正確。");
 
-        const tradableRows = payload.filter(row => isLikelySpotUsdtPair(row.symbol)
-            && Number(row.quoteVolume) >= 500000
-            && Number.isFinite(Number(row.priceChangePercent))
-            && Number.isFinite(Number(row.lastPrice))
-            && !/(UP|DOWN|BEAR|BULL)USDT$/.test(row.symbol));
-        const volumeTop = [...tradableRows].sort((a, b) => Number(b.quoteVolume) - Number(a.quoteVolume)).slice(0, 10);
-        const gainers = [...tradableRows].filter(row => Number(row.priceChangePercent) > 0)
-            .sort((a, b) => Number(b.priceChangePercent) - Number(a.priceChangePercent)).slice(0, 10);
-        const losers = [...tradableRows].filter(row => Number(row.priceChangePercent) < 0)
-            .sort((a, b) => Number(a.priceChangePercent) - Number(b.priceChangePercent)).slice(0, 10);
-        renderMarketRankRows("market-volume-body", volumeTop);
-        renderMarketRankRows("market-gainers-body", gainers);
-        renderMarketRankRows("market-losers-body", losers);
+        const upCount = observedRows.filter(row => Number(row.priceChangePercent) > 0).length;
+        const downCount = observedRows.filter(row => Number(row.priceChangePercent) < 0).length;
+        const flatCount = observedRows.length - upCount - downCount;
+        const upRatio = (upCount / observedRows.length) * 100;
+        const totalVolume = observedRows.reduce((sum, row) => sum + (Number(row.quoteVolume) || 0), 0);
+        const sortedChanges = observedRows.map(row => Number(row.priceChangePercent)).sort((a, b) => a - b);
+        const mid = Math.floor(sortedChanges.length / 2);
+        const medianChange = sortedChanges.length % 2 ? sortedChanges[mid] : (sortedChanges[mid - 1] + sortedChanges[mid]) / 2;
+        const byVolume = [...observedRows].sort((a, b) => Number(b.quoteVolume) - Number(a.quoteVolume));
+        const top3Volume = byVolume.slice(0, 3).reduce((sum, row) => sum + (Number(row.quoteVolume) || 0), 0);
+        const concentration = totalVolume > 0 ? (top3Volume / totalVolume) * 100 : 0;
+
+        document.getElementById("market-up-count").textContent = `${upCount} / ${observedRows.length}`;
+        document.getElementById("market-down-count").textContent = `${downCount} / ${observedRows.length}`;
+        document.getElementById("market-up-ratio").textContent = `${upRatio.toFixed(0)}%`;
+        document.getElementById("market-total-volume").textContent = `約 ${formatCompactMoney(totalVolume)} USDT`;
+        setMarketInsight("breadth", upRatio >= 70 ? "漲勢較普遍" : upRatio <= 30 ? "跌勢較普遍" : "多空分歧", `上漲 ${upCount} 種、下跌 ${downCount} 種${flatCount ? `、持平 ${flatCount} 種` : ""}；共計 ${observedRows.length} 種。`);
+        setMarketInsight("median", formatPct(medianChange), "觀察清單漲跌幅的中間值；比平均值更不容易被極端漲跌影響。");
+        setMarketInsight("concentration", `${concentration.toFixed(0)}%`, "前三大成交額占比。比例高表示交易活躍度集中，不代表資金淨流入。");
+
+        ["market-volume-count-label", "market-gainers-count-label", "market-losers-count-label"].forEach(id => {
+            const node = document.getElementById(id);
+            if (node) node.textContent = String(marketRankCount);
+        });
+        const rankRows = [...observedRows];
+        renderMarketRankRows("market-volume-body", [...rankRows].sort((a, b) => Number(b.quoteVolume) - Number(a.quoteVolume)).slice(0, marketRankCount));
+        renderMarketRankRows("market-gainers-body", [...rankRows].filter(row => Number(row.priceChangePercent) > 0).sort((a, b) => Number(b.priceChangePercent) - Number(a.priceChangePercent)).slice(0, marketRankCount));
+        renderMarketRankRows("market-losers-body", [...rankRows].filter(row => Number(row.priceChangePercent) < 0).sort((a, b) => Number(a.priceChangePercent) - Number(b.priceChangePercent)).slice(0, marketRankCount));
 
         const tip = document.querySelector("#market-summary-tip span");
         if (tip) {
-            if (upRatio == null) tip.textContent = "目前無法計算市場廣度，請稍後重新整理。";
-            else if (upRatio >= 70) tip.textContent = `觀察清單約 ${upRatio.toFixed(0)}% 上漲，漲勢目前較普遍；仍需留意價格是否已短線過熱。`;
-            else if (upRatio <= 30) tip.textContent = `觀察清單只有約 ${upRatio.toFixed(0)}% 上漲，市場偏弱；避免只因價格下跌就急著抄底。`;
-            else tip.textContent = `觀察清單約 ${upRatio.toFixed(0)}% 上漲，市場方向不算一致；可以再搭配成交額和個別幣種走勢判讀。`;
+            const state = upRatio >= 70 ? "上漲較普遍" : upRatio <= 30 ? "下跌較普遍" : "多空分歧";
+            const medianState = medianChange > 1 ? "中間位置的幣種也偏強" : medianChange < -1 ? "中間位置的幣種也偏弱" : "典型幣種漲跌幅不大";
+            const concentrationState = concentration >= 60 ? "成交集中在少數幣種" : "成交分布相對分散";
+            tip.textContent = `研判：${state}；${medianState}；${concentrationState}。建議先看這三項是否互相支持，再查看下方訊號。這是規則式市場觀察，不是買賣指令。`;
         }
+        buildMarketObservations(observedRows, upRatio, medianChange, concentration);
         marketOverviewLoadedAt = Date.now();
-        status.textContent = `資料來源：Binance Spot · 更新於 ${formatUpdatedTime()} · 排行僅納入 24 小時成交額至少 500,000 USDT 的交易對`;
+        const sourceName = marketCustomSymbols.length ? `自訂觀察清單 ${observedRows.length}/${selectedSymbols.length} 種` : `預設市值觀察清單 ${observedRows.length} 種`;
+        status.textContent = `來源：Binance Spot · ${sourceName} · 排行顯示 ${marketRankCount} 名 · 更新於 ${formatUpdatedTime()}${missingSymbols.length ? ` · 未找到：${missingSymbols.map(s => s.replace(/USDT$/, "")).join(", ")}` : ""}`;
     } catch (error) {
         console.error("載入市場總覽失敗：", error);
-        status.textContent = "市場數據暫時無法取得。請稍後重試；若仍失敗，可能是網路或 Binance API 存取限制。";
+        status.textContent = error.message || "市場數據暫時無法取得。請稍後重試。";
         status.classList.add("error-text");
     } finally {
         marketOverviewLoading = false;
     }
 }
 
+readMarketSettings();
 document.getElementById("market-refresh-btn")?.addEventListener("click", () => loadMarketOverview(true));
+document.getElementById("market-apply-settings")?.addEventListener("click", applyMarketSettings);
 
 // Feature tabs keep the interface compact on desktop and mobile.
 function initFeatureTabs() {
