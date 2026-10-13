@@ -1,4 +1,5 @@
 let LIVE_SYMBOLS = [];
+let ALL_BINANCE_USDT_SYMBOLS = [];
 
 /** Binance USDT 現貨市值前25；執行時會優先依 CoinGecko 市值排名過濾 Binance 上架交易對，失敗時使用此備援清單。 */
 let TOP25_SYMBOLS = [
@@ -425,9 +426,11 @@ async function resolveBinanceTop25ByMarketCap() {
         if (!exchangeResponse.ok || !marketResponse.ok) throw new Error("市值來源暫時無法取得");
         const exchange = await exchangeResponse.json();
         const markets = await marketResponse.json();
-        const listed = new Set((exchange.symbols || [])
-            .filter(x => x.status === "TRADING" && x.isSpotTradingAllowed !== false && x.quoteAsset === "USDT")
-            .map(x => x.baseAsset.toUpperCase()));
+        const tradableUsdtPairs = (exchange.symbols || [])
+            .filter(x => x.status === "TRADING" && x.isSpotTradingAllowed !== false && x.quoteAsset === "USDT");
+        ALL_BINANCE_USDT_SYMBOLS = [...new Set(tradableUsdtPairs
+            .map(x => `${String(x.baseAsset).toUpperCase()}USDT`))].sort((a, b) => a.localeCompare(b));
+        const listed = new Set(tradableUsdtPairs.map(x => x.baseAsset.toUpperCase()));
         const matched = markets
             .filter(c => c.symbol && listed.has(c.symbol.toUpperCase()) && Number.isFinite(Number(c.market_cap)))
             .sort((a, b) => Number(b.market_cap) - Number(a.market_cap))
@@ -962,11 +965,16 @@ function populateDcaSymbolOptions(filter = "") {
     const input = document.getElementById("dca-symbol-input");
     if (!list) return;
     const query = String(filter || "").trim().toUpperCase().replace(/USDT$/, "");
-    const symbols = TOP25_SYMBOLS.filter(symbol => !query || symbolLabel(symbol).includes(query));
+    // 空白時只顯示市值前 25；有輸入時改從 Binance 全部可交易 USDT 現貨交易對模糊搜尋。
+    const sourceSymbols = query && ALL_BINANCE_USDT_SYMBOLS.length
+        ? ALL_BINANCE_USDT_SYMBOLS
+        : TOP25_SYMBOLS;
+    const symbols = sourceSymbols.filter(symbol => !query || symbolLabel(symbol).includes(query));
     list.innerHTML = symbols.map(symbol => {
         const label = symbolLabel(symbol);
-        return `<button type="button" class="symbol-option" role="option" data-symbol="${label}"><strong>${label}</strong><span>USDT · 市值前 25</span></button>`;
-    }).join("") || `<div class="symbol-options-empty">沒有符合的熱門幣種，可直接輸入自訂代號</div>`;
+        const sourceLabel = query ? "Binance USDT 現貨" : "市值前 25";
+        return `<button type="button" class="symbol-option" role="option" data-symbol="${label}"><strong>${label}</strong><span>USDT · ${sourceLabel}</span></button>`;
+    }).join("") || `<div class="symbol-options-empty">沒有符合的 Binance USDT 現貨幣種；仍可直接輸入自訂代號</div>`;
     // 不要在清空輸入框時自動補回 BTC；允許使用者自由編輯到空字串或單一字母。
 }
 
