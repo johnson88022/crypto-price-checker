@@ -150,88 +150,19 @@ function renderLivePriceTable() {
         <tr>
             <td class="sym">${symbolLabel(symbol)}</td>
             <td id="${symbol.toLowerCase()}-binance" class="live-current-price">載入中…</td>
-            <td id="${symbol.toLowerCase()}-change" class="live-period-change">載入中…</td>
         </tr>`).join("");
 }
 
-const LIVE_CHANGE_INTERVALS = {
-    "15m": { label: "15 分鐘", api: "15m" },
-    "30m": { label: "30 分鐘", api: "30m" },
-    "1h": { label: "1 小時", api: "1h" },
-    "2h": { label: "2 小時", api: "2h" },
-    "4h": { label: "4 小時", api: "4h" },
-    "1d": { label: "1 天", api: "1d" },
-    "1w": { label: "1 週", api: "1w" },
-    "1M": { label: "1 個月", api: "1M" },
-};
-
-async function getBinanceIntervalChange(symbol, interval, currentPrice) {
-    // 以「所選時間之前」的歷史價格為基準，計算滾動區間至目前即時價的漲跌幅。
-    const intervalMs = {
-        "15m": 15 * 60 * 1000,
-        "30m": 30 * 60 * 1000,
-        "1h": 60 * 60 * 1000,
-        "2h": 2 * 60 * 60 * 1000,
-        "4h": 4 * 60 * 60 * 1000,
-        "1d": 24 * 60 * 60 * 1000,
-        "1w": 7 * 24 * 60 * 60 * 1000,
-        "1M": 30 * 24 * 60 * 60 * 1000,
-    }[interval];
-    try {
-        if (!intervalMs) throw new Error("不支援的觀察區間");
-        const url = new URL("https://api.binance.com/api/v3/klines");
-        url.searchParams.set("symbol", symbol);
-        url.searchParams.set("interval", "1m");
-        url.searchParams.set("startTime", String(Date.now() - intervalMs));
-        url.searchParams.set("limit", "1");
-        const response = await fetch(url.toString(), { cache: "no-store" });
-        const data = await response.json();
-        if (!response.ok || data?.code || !Array.isArray(data) || !Array.isArray(data[0])) {
-            throw new Error(data?.msg || `K 線 API HTTP ${response.status}`);
-        }
-        const referencePrice = Number(data[0][1]);
-        let livePrice = Number(currentPrice);
-        if (!(livePrice > 0)) {
-            const priceResponse = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
-            const priceData = await priceResponse.json();
-            if (!priceResponse.ok || !(Number(priceData?.price) > 0)) throw new Error("即時價格暫時無法取得");
-            livePrice = Number(priceData.price);
-        }
-        if (!(referencePrice > 0) || !(livePrice > 0)) throw new Error("歷史參考價或現價無效");
-        return ((livePrice - referencePrice) / referencePrice) * 100;
-    } catch (error) {
-        console.warn(`無法取得 ${symbol} 區間漲跌幅`, error);
-        return null;
-    }
-}
-
 async function updatePrices() {
-    const interval = document.getElementById("live-change-interval")?.value || "15m";
-    const selected = LIVE_CHANGE_INTERVALS[interval] || LIVE_CHANGE_INTERVALS["15m"];
+    // 即時報價僅顯示幣名與 Binance 現價；移除不穩定的歷史區間漲跌幅請求。
     const priceMap = await fetchAllBinancePrices();
-    const changes = new Map();
-    const chunks = await mapInChunks(LIVE_SYMBOLS, 8, async (symbol) => ({
-        symbol,
-        change: await getBinanceIntervalChange(symbol, selected.api, priceMap.get(symbol)),
-    }));
-    chunks.forEach(item => changes.set(item.symbol, item.change));
     let failed = 0;
     LIVE_SYMBOLS.forEach(symbol => {
         const priceCell = document.getElementById(`${symbol.toLowerCase()}-binance`);
-        const changeCell = document.getElementById(`${symbol.toLowerCase()}-change`);
         const price = priceMap.get(symbol);
-        const change = changes.get(symbol);
         if (priceCell) priceCell.textContent = price == null ? "現價暫不可用" : formatPrice(symbol, price);
-        if (changeCell) {
-            changeCell.textContent = change == null ? "區間漲跌暫不可用" : formatPct(change);
-            changeCell.classList.toggle("pct-up", change != null && change >= 0);
-            changeCell.classList.toggle("pct-down", change != null && change < 0);
-            changeCell.title = `Binance ${selected.label} 區間漲跌幅`;
-        }
         if (price == null) failed += 1;
     });
-    const label = document.getElementById("live-change-label");
-    if (label) label.textContent = `${selected.label}至今漲跌幅（%）`;
     return failed;
 }
 
@@ -611,19 +542,6 @@ function initFeatureTabs() {
     activate("live");
 }
 initFeatureTabs();
-document.getElementById("live-change-interval")?.addEventListener("change", async () => {
-    const label = document.getElementById("live-change-label");
-    const interval = document.getElementById("live-change-interval");
-    const selected = LIVE_CHANGE_INTERVALS[interval?.value] || LIVE_CHANGE_INTERVALS["15m"];
-    if (label) label.textContent = `${selected.label}至今漲跌幅（%）`;
-    const cells = document.querySelectorAll(".live-period-change");
-    cells.forEach(cell => { cell.textContent = "計算中…"; cell.classList.remove("pct-up", "pct-down"); });
-    try { await updatePrices(); }
-    catch (error) {
-        console.error("更新區間漲跌幅失敗", error);
-        cells.forEach(cell => { cell.textContent = "載入失敗，請重試"; });
-    }
-});
 
 // ==================== DCA Return Calculator ====================
 function normalizeDcaSymbol(input) {

@@ -52,25 +52,10 @@
                 <h2 class="section-title">即時報價</h2>
                 <span id="last-updated" class="last-updated">尚未更新</span>
             </div>
-            <div class="live-interval-control form-row">
-                <label for="live-change-interval">漲跌幅觀察區間</label>
-                <select id="live-change-interval">
-                    <option value="15m" selected>15 MIN</option><option value="30m">30 MIN</option>
-                    <option value="1h">1 HR</option><option value="2h">2 HR</option><option value="4h">4 HR</option>
-                    <option value="1d">1 Day</option><option value="1w">1 Week</option><option value="1M">1 Month</option>
-                </select>
-            </div>
             <div class="price-table-wrap">
-                <table class="price-table">
-                    <thead>
-                        <tr>
-                            <th aria-label="幣名稱"></th>
-                            <th aria-label="現價 (USDT)"></th>
-                            <th id="live-change-label">15 分鐘漲跌幅（從本區間開盤價至現價）</th>
-                        </tr>
-                    </thead>
+                <table class="price-table" aria-label="幣種名稱與 Binance 即時價格">
                     <tbody id="live-price-body">
-                        <tr><td colspan="3" class="muted">載入中…</td></tr>
+                        <tr><td colspan="2" class="muted">載入中…</td></tr>
                     </tbody>
                 </table>
             </div>
