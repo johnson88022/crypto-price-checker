@@ -1,0 +1,16 @@
+services:
+  crypto-price-checker:
+    build: .
+    container_name: crypto-price-checker
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: 8080
+      SCAN_INTERVAL_MS: 60000
+      SCAN_CONCURRENCY: 16
+      MIN_QUOTE_VOLUME: 0
+      VAPID_SUBJECT: "mailto:admin@example.com"
+      EXCLUDED_STABLE_BASES: "USDT,USDC,BUSD,FDUSD,TUSD,USDP,DAI,USDE,USDS,USD1,UST,USTC,FRAX,LUSD,USDD,EURC,AEUR,EURI"
+    volumes:
+      - ./data:/app/data

@@ -1,5 +1,11 @@
 let LIVE_SYMBOLS = [];
 let ALL_BINANCE_USDT_SYMBOLS = [];
+const EXCLUDED_USD_STABLE_BASES = new Set(['USDT','USDC','BUSD','FDUSD','TUSD','USDP','DAI','USDE','USDS','USD1','UST','USTC','FRAX','LUSD','USDD','EURC','AEUR','EURI']);
+function isExcludedStableSymbol(symbol) {
+    const s = String(symbol || '').toUpperCase();
+    const base = s.endsWith('USDT') ? s.slice(0, -4) : s;
+    return s === 'USDT' || EXCLUDED_USD_STABLE_BASES.has(base) || /(UP|DOWN|BEAR|BULL)USDT$/.test(s);
+}
 
 /** Binance USDT 現貨市值前25；執行時會優先依 CoinGecko 市值排名過濾 Binance 上架交易對，失敗時使用此備援清單。 */
 let TOP25_SYMBOLS = [
@@ -32,13 +38,15 @@ function symbolLabel(symbol) {
 }
 
 function formatPrice(symbol, price) {
-    price = parseFloat(price);
-    if (Number.isNaN(price)) return "—";
-    if (symbol === "PEPEUSDT") return price.toFixed(8);
-    if (["ADAUSDT", "SUIUSDT", "XRPUSDT", "TRXUSDT", "DOGEUSDT"].includes(symbol)) {
-        return price.toFixed(4);
-    }
-    return price.toFixed(2);
+    price = Number(price);
+    if (!Number.isFinite(price)) return "—";
+    // Show enough decimals to distinguish low-priced assets instead of rounding them to zero.
+    const digits = price >= 1000 ? 2 : price >= 1 ? 4 : price >= 0.01 ? 6 : price >= 0.0001 ? 8 : 12;
+    return price.toLocaleString("en-US", {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: digits,
+        useGrouping: false
+    });
 }
 
 function formatPct(pct) {
@@ -60,7 +68,7 @@ function parseCustomSymbols(raw) {
     const out = [];
     for (const part of raw.split(/[,，、\s\n]+/)) {
         const symbol = normalizeBinanceSymbol(part);
-        if (symbol && !seen.has(symbol)) {
+        if (symbol && !isExcludedStableSymbol(symbol) && !seen.has(symbol)) {
             seen.add(symbol);
             out.push(symbol);
         }
@@ -80,8 +88,7 @@ async function mapInChunks(items, chunkSize, fn) {
 
 function isLikelySpotUsdtPair(symbol) {
     if (!symbol.endsWith("USDT")) return false;
-    if (symbol.includes("_")) return false;
-    if (/(UP|DOWN|BEAR|BULL)USDT$/.test(symbol)) return false;
+    if (symbol.includes("_") || isExcludedStableSymbol(symbol)) return false;
     return symbol.length >= 5 && symbol.length <= 16;
 }
 
@@ -362,27 +369,24 @@ function initKlineDateTimePickers() {
 
 async function resolveBinanceTop25ByMarketCap() {
     try {
-        const [exchangeResponse, marketResponse] = await Promise.all([
-            fetch("https://api.binance.com/api/v3/exchangeInfo"),
-            fetch("https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=1&sparkline=false")
-        ]);
-        if (!exchangeResponse.ok || !marketResponse.ok) throw new Error("市值來源暫時無法取得");
+        const exchangeResponse = await fetch("https://api.binance.com/api/v3/exchangeInfo", { cache: "no-store" });
+        if (!exchangeResponse.ok) throw new Error("Binance 交易對清單暫時無法取得");
         const exchange = await exchangeResponse.json();
-        const markets = await marketResponse.json();
         const tradableUsdtPairs = (exchange.symbols || [])
-            .filter(x => x.status === "TRADING" && x.isSpotTradingAllowed !== false && x.quoteAsset === "USDT");
-        ALL_BINANCE_USDT_SYMBOLS = [...new Set(tradableUsdtPairs
-            .map(x => `${String(x.baseAsset).toUpperCase()}USDT`))].sort((a, b) => a.localeCompare(b));
-        const listed = new Set(tradableUsdtPairs.map(x => x.baseAsset.toUpperCase()));
-        const matched = markets
-            .filter(c => c.symbol && listed.has(c.symbol.toUpperCase()) && Number.isFinite(Number(c.market_cap)))
-            .sort((a, b) => Number(b.market_cap) - Number(a.market_cap))
-            .slice(0, 25)
-            .map(c => `${c.symbol.toUpperCase()}USDT`);
-        if (matched.length >= 20) TOP25_SYMBOLS = matched;
-    } catch (error) {
-        console.warn("無法更新市值前25，使用備援清單：", error);
-    }
+            .filter(x => x.status === "TRADING" && x.isSpotTradingAllowed !== false && x.quoteAsset === "USDT" && !isExcludedStableSymbol(`${String(x.baseAsset).toUpperCase()}USDT`));
+        ALL_BINANCE_USDT_SYMBOLS = [...new Set(tradableUsdtPairs.map(x => `${String(x.baseAsset).toUpperCase()}USDT`))].sort((a, b) => a.localeCompare(b));
+        try {
+            const marketResponse = await fetch("https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=1&sparkline=false", { cache: "no-store", signal: AbortSignal.timeout(5000) });
+            if (marketResponse.ok) {
+                const markets = await marketResponse.json();
+                const listed = new Set(tradableUsdtPairs.map(x => x.baseAsset.toUpperCase()));
+                const matched = markets.filter(c => c.symbol && listed.has(c.symbol.toUpperCase()) && Number.isFinite(Number(c.market_cap)))
+                    .sort((a, b) => Number(b.market_cap) - Number(a.market_cap)).slice(0, 25).map(c => `${c.symbol.toUpperCase()}USDT`);
+                if (matched.length >= 20) TOP25_SYMBOLS = matched.filter(s => !isExcludedStableSymbol(s));
+            }
+        } catch (error) { console.warn("CoinGecko 市值排行不可用，使用 Binance 可交易幣種清單：", error); }
+    } catch (error) { console.warn("無法更新 Binance 交易對清單：", error); }
+    TOP25_SYMBOLS = TOP25_SYMBOLS.filter(s => !isExcludedStableSymbol(s));
     return TOP25_SYMBOLS;
 }
 
@@ -511,6 +515,10 @@ resolveBinanceTop25ByMarketCap().then(() => {
     populateDcaSymbolOptions();
     renderLivePriceTable();
     refreshWebApp();
+    if (!window.__cpcDcaAutoScanStarted) {
+        window.__cpcDcaAutoScanStarted = true;
+        setTimeout(() => scanDcaRecommendations(), 1200);
+    }
 });
 
 // 更新頻率適度放慢，避免 25 個幣種的價格與 K 線請求過於密集。
@@ -554,7 +562,7 @@ function parseMarketSymbols(raw) {
     const seen = new Set();
     return String(raw || "").split(/[\s,，;；]+/).map(value => value.trim().toUpperCase())
         .filter(Boolean).map(value => value.endsWith("USDT") ? value : `${value}USDT`)
-        .filter(value => /^[A-Z0-9]{2,14}USDT$/.test(value) && !/(UP|DOWN|BEAR|BULL)USDT$/.test(value))
+        .filter(value => /^[A-Z0-9]{2,14}USDT$/.test(value) && !isExcludedStableSymbol(value))
         .filter(value => !seen.has(value) && seen.add(value));
 }
 
@@ -670,8 +678,11 @@ async function loadMarketOverview(force = false) {
         const payload = await response.json();
         if (!Array.isArray(payload)) throw new Error("收到的市場資料格式不正確");
 
+        const allSpotRows = payload.filter(row => row && typeof row.symbol === "string" && isLikelySpotUsdtPair(row.symbol)
+            && Number.isFinite(Number(row.priceChangePercent)) && Number.isFinite(Number(row.lastPrice)));
         const bySymbol = new Map(payload.filter(row => row && typeof row.symbol === "string").map(row => [row.symbol, row]));
-        const selectedSymbols = marketCustomSymbols.length ? marketCustomSymbols : TOP25_SYMBOLS;
+        // Preserve the default major-cap universe and add user-defined symbols; custom input never replaces majors.
+        const selectedSymbols = [...new Set([...TOP25_SYMBOLS, ...marketCustomSymbols])].filter(symbol => !isExcludedStableSymbol(symbol));
         const missingSymbols = selectedSymbols.filter(symbol => !bySymbol.has(symbol));
         const observedRows = selectedSymbols.map(symbol => bySymbol.get(symbol)).filter(row => row
             && Number.isFinite(Number(row.priceChangePercent)) && Number.isFinite(Number(row.lastPrice)));
@@ -702,7 +713,7 @@ async function loadMarketOverview(force = false) {
             if (node) node.textContent = String(marketRankCount);
         });
         const rankRows = [...observedRows];
-        renderMarketRankRows("market-volume-body", [...rankRows].sort((a, b) => Number(b.quoteVolume) - Number(a.quoteVolume)).slice(0, marketRankCount));
+        renderMarketRankRows("market-volume-body", [...allSpotRows].sort((a, b) => Number(b.quoteVolume) - Number(a.quoteVolume)).slice(0, marketRankCount));
         renderMarketRankRows("market-gainers-body", [...rankRows].filter(row => Number(row.priceChangePercent) > 0).sort((a, b) => Number(b.priceChangePercent) - Number(a.priceChangePercent)).slice(0, marketRankCount));
         renderMarketRankRows("market-losers-body", [...rankRows].filter(row => Number(row.priceChangePercent) < 0).sort((a, b) => Number(a.priceChangePercent) - Number(b.priceChangePercent)).slice(0, marketRankCount));
 
@@ -715,7 +726,7 @@ async function loadMarketOverview(force = false) {
         }
         buildMarketObservations(observedRows, upRatio, medianChange, concentration);
         marketOverviewLoadedAt = Date.now();
-        const sourceName = marketCustomSymbols.length ? `自訂觀察清單 ${observedRows.length}/${selectedSymbols.length} 種` : `預設市值觀察清單 ${observedRows.length} 種`;
+        const sourceName = marketCustomSymbols.length ? `市值前 25＋自訂觀察清單 ${observedRows.length}/${selectedSymbols.length} 種` : `預設市值觀察清單 ${observedRows.length} 種`;
         status.textContent = `來源：Binance Spot · ${sourceName} · 排行顯示 ${marketRankCount} 名 · 更新於 ${formatUpdatedTime()}${missingSymbols.length ? ` · 未找到：${missingSymbols.map(s => s.replace(/USDT$/, "")).join(", ")}` : ""}`;
     } catch (error) {
         console.error("載入市場總覽失敗：", error);
@@ -745,15 +756,16 @@ function initFeatureTabs() {
     tabs.forEach(tab => tab.addEventListener("click", () => {
         activate(tab.dataset.featureTab);
         if (tab.dataset.featureTab === "market") loadMarketOverview();
+        if (tab.dataset.featureTab === "alerts") loadMarketAlerts();
     }));
-    activate("live");
+    activate("alerts");
 }
 initFeatureTabs();
 
 // ==================== DCA Return Calculator ====================
 function normalizeDcaSymbol(input) {
     const symbol = normalizeBinanceSymbol(input || "");
-    return symbol;
+    return isExcludedStableSymbol(symbol) ? "" : symbol;
 }
 
 function toUtcDateKey(date) {
@@ -908,7 +920,9 @@ async function calculateDcaReturn() {
     const symbol = normalizeDcaSymbol(document.getElementById("dca-symbol-input").value);
     const startDate = parseDateInput(document.getElementById("dca-start").value);
     const frequency = document.getElementById("dca-frequency").value;
-    const amount = Number(document.getElementById("dca-amount").value);
+    const amountInput = document.getElementById("dca-amount");
+    if (!amountInput.value.trim()) amountInput.value = "100";
+    const amount = Number(amountInput.value);
 
     status.classList.remove("error-text");
     result.hidden = true;
@@ -1105,7 +1119,7 @@ function populateDcaSymbolOptions(filter = "") {
     // 空白時只顯示市值前 25；有輸入時改從 Binance 全部可交易 USDT 現貨交易對模糊搜尋。
     const sourceSymbols = query && ALL_BINANCE_USDT_SYMBOLS.length
         ? ALL_BINANCE_USDT_SYMBOLS
-        : TOP25_SYMBOLS;
+        : TOP25_SYMBOLS.filter(symbol => !isExcludedStableSymbol(symbol));
     const symbols = sourceSymbols.filter(symbol => !query || symbolLabel(symbol).includes(query));
     list.innerHTML = symbols.map(symbol => {
         const label = symbolLabel(symbol);
@@ -1155,6 +1169,9 @@ function initDcaInputs() {
     const todayKey = toUtcDateKey(today);
     start.value = todayKey;
     end.value = todayKey;
+    const amountInput = document.getElementById("dca-amount");
+    if (amountInput && !amountInput.value.trim()) amountInput.value = "100";
+    amountInput?.addEventListener("blur", () => { if (!amountInput.value.trim()) amountInput.value = "100"; });
     start.max = todayKey;
     end.max = todayKey;
 
@@ -1168,3 +1185,337 @@ function initDcaInputs() {
 
 document.getElementById("dca-btn").addEventListener("click", calculateDcaReturn);
 initDcaInputs();
+
+
+// DCA discovery: scan the selected Binance universe and rank coins by current price vs
+// historical scheduled-buy average. Clicking a row opens the existing full scenario report.
+function dcaTier(pct) {
+    if (pct <= -20) return { label: "非常推薦", cls: "recommendation-very-good", rank: 0 };
+    if (pct <= -5) return { label: "推薦", cls: "recommendation-good", rank: 1 };
+    if (pct <= 5) return { label: "普通", cls: "recommendation-neutral", rank: 2 };
+    if (pct <= 20) return { label: "不推薦", cls: "recommendation-bad", rank: 3 };
+    return { label: "非常不推薦", cls: "recommendation-very-bad", rank: 4 };
+}
+function dcaMoney(n) {
+    if (!Number.isFinite(n)) return "—";
+    return n.toLocaleString("en-US", { maximumFractionDigits: 12, minimumFractionDigits: 0 });
+}
+let dcaDiscoveryRows = [];
+let dcaDiscoveryScanInProgress = false;
+function renderDcaDiscoveryRows(errors = []) {
+    const list = document.getElementById("dca-discovery-list");
+    if (!list) return;
+    const query = (document.getElementById("dca-discovery-search")?.value || "").trim().toUpperCase();
+    const tier = document.getElementById("dca-tier-filter")?.value || "all";
+    const source = dcaDiscoveryRows.length ? dcaDiscoveryRows : (window.dcaDiscoveryRows || []);
+    const filtered = source.filter(r => (!query || symbolLabel(r.symbol).includes(query)) && (tier === "all" || String(r.tier.rank) === tier));
+    list.innerHTML = filtered.map(r => `<button type="button" class="dca-discovery-row" data-dca-symbol="${r.symbol}" data-dca-start="${r.firstDate}">
+        <span class="dca-discovery-coin"><strong>${symbolLabel(r.symbol)}</strong><small>${r.count.toLocaleString()} 次定投樣本 · 起始 ${r.firstDate}</small></span>
+        <span class="dca-discovery-price"><strong>${formatPrice(r.symbol,r.current)} USDT</strong><small>均價 ${formatPrice(r.symbol,r.avg)} USDT</small></span>
+        <span class="dca-discovery-grade ${r.tier.cls}">${r.tier.label}<small>${formatPct(r.pct)}</small></span></button>`).join("") || '<div class="muted">目前篩選條件沒有符合的幣種。</div>';
+    if (errors.length) list.insertAdjacentHTML("beforeend", `<div class="dca-scan-errors">無法分析 ${errors.length} 種（交易對不存在、歷史資料不足或 API 暫時受限）；例如：${errors.slice(0, 25).map(r=>symbolLabel(r.symbol)).join("、")}${errors.length > 25 ? "…" : ""}</div>`);
+}
+
+async function scanDcaRecommendations() {
+    if (dcaDiscoveryScanInProgress) return;
+    dcaDiscoveryScanInProgress = true;
+    const button = document.getElementById("dca-scan-btn");
+    const list = document.getElementById("dca-discovery-list");
+    const summary = document.getElementById("dca-tier-summary");
+    const frequency = document.getElementById("dca-frequency").value;
+    const amountInput = document.getElementById("dca-amount");
+    if (!amountInput.value.trim()) amountInput.value = "100";
+    const amount = Number(amountInput.value) || 100;
+    const universe = document.getElementById("dca-scan-universe").value;
+    const cacheKey = `cpc_dca_discovery_v5:${frequency}:${universe}`;
+    let hasFreshCache = false;
+    try {
+        const cached = JSON.parse(localStorage.getItem(cacheKey) || "null");
+        if (cached && Array.isArray(cached.rows) && Date.now() - cached.at < 30 * 60 * 1000) {
+            hasFreshCache = true;
+            dcaDiscoveryRows = cached.rows;
+            renderDcaDiscoveryRows();
+            const counts = [0,1,2,3,4].map(rank => dcaDiscoveryRows.filter(r => r.tier.rank === rank).length);
+            summary.innerHTML = `<span>非常推薦 <b>${counts[0]}</b></span><span>推薦 <b>${counts[1]}</b></span><span>普通 <b>${counts[2]}</b></span><span>不推薦 <b>${counts[3]}</b></span><span>非常不推薦 <b>${counts[4]}</b></span>`;
+            list.insertAdjacentHTML("afterbegin", '<div class="muted">已先載入快取結果，正在背景更新全市場數據…</div>');
+        }
+    } catch {}
+    let symbols;
+    if (universe === "top25") symbols = [...TOP25_SYMBOLS];
+    else {
+        if (!ALL_BINANCE_USDT_SYMBOLS.length) await resolveBinanceTop25ByMarketCap();
+        // Scan the full active USDT spot universe; leveraged tokens and duplicate-like wrappers are excluded.
+        symbols = ALL_BINANCE_USDT_SYMBOLS.filter(s => !/(UP|DOWN|BULL|BEAR)USDT$/.test(s));
+        symbols = [...new Set([...TOP25_SYMBOLS, ...symbols])];
+    }
+    symbols = [...new Set(symbols)];
+    if (!symbols.length) { dcaDiscoveryScanInProgress = false; list.innerHTML = '<div class="error-text">沒有可掃描的幣種，請重新整理後再試。</div>'; return; }
+    button.disabled = true;
+    button.textContent = "掃描中…";
+    if (hasFreshCache) {
+        renderDcaDiscoveryRows();
+        list.insertAdjacentHTML("afterbegin", '<div class="muted">已先顯示快取結果，正在背景更新全市場數據…</div>');
+    } else list.innerHTML = '<div class="muted">正在查詢 Binance 歷史 K 線與現價，請稍候…</div>';
+    summary.textContent = hasFreshCache ? "快取已載入，背景更新中" : "掃描中";
+    const now = new Date();
+    const endMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59, 999);
+    const rows = [];
+    try {
+        // Keep concurrency conservative to reduce API rate-limit errors. Full-universe scans may take several minutes.
+        const totalSymbols = symbols.length;
+        for (let i = 0; i < symbols.length; i += 6) {
+            const chunk = symbols.slice(i, i + 6);
+            const batch = await Promise.all(chunk.map(async symbol => {
+                try {
+                    const firstUrl = new URL("https://api.binance.com/api/v3/klines");
+                    firstUrl.searchParams.set("symbol", symbol);
+                    firstUrl.searchParams.set("interval", "1d");
+                    firstUrl.searchParams.set("startTime", "0");
+                    firstUrl.searchParams.set("limit", "1");
+                    const firstRes = await fetch(firstUrl);
+                    const firstData = await firstRes.json();
+                    if (!firstRes.ok || !Array.isArray(firstData) || !firstData.length) throw new Error("無歷史 K 線");
+                    const firstDate = new Date(Number(firstData[0][0]));
+                    const startMs = Number(firstData[0][0]);
+                    const [prices, current] = await Promise.all([
+                        fetchBinanceDailyCloses(symbol, startMs, endMs),
+                        fetchBinanceCurrentPriceRaw(symbol)
+                    ]);
+                    const dates = [...prices.keys()].sort();
+                    if (!dates.length) throw new Error("歷史資料不足");
+                    const startDate = new Date(`${dates[0]}T00:00:00`);
+                    const schedule = buildDcaSchedule(startDate, now, frequency);
+                    let invested = 0, units = 0, count = 0;
+                    for (const date of schedule) {
+                        const key = toUtcDateKey(date);
+                        const price = prices.get(key);
+                        if (Number.isFinite(price) && price > 0) {
+                            invested += amount;
+                            units += amount / price;
+                            count++;
+                        }
+                    }
+                    if (!count || !units) throw new Error("無法建立定投樣本");
+                    const avg = invested / units;
+                    const pct = ((current - avg) / avg) * 100;
+                    return { symbol, current, avg, pct, count, firstDate: dates[0], tier: dcaTier(pct) };
+                } catch (e) {
+                    return { symbol, error: e.message || "資料不可用" };
+                }
+            }));
+            rows.push(...batch);
+            list.innerHTML = `<div class="muted scan-progress">已完成 ${rows.length.toLocaleString()} / ${totalSymbols.toLocaleString()} 個幣種（全市場掃描可能需要數分鐘，請勿關閉頁面）…</div>`;
+        }
+        const valid = rows.filter(r => !r.error).sort((a,b) => a.tier.rank-b.tier.rank || a.pct-b.pct);
+        dcaDiscoveryRows = valid;
+        window.dcaDiscoveryRows = valid;
+        try { localStorage.setItem(cacheKey, JSON.stringify({ at: Date.now(), rows: valid })); } catch {}
+        renderDcaDiscoveryRows();
+        const errors = rows.filter(r => r.error);
+        const counts = [0,1,2,3,4].map(rank => valid.filter(r => r.tier.rank === rank).length);
+        summary.innerHTML = `<span>非常推薦 <b>${counts[0]}</b></span><span>推薦 <b>${counts[1]}</b></span><span>普通 <b>${counts[2]}</b></span><span>不推薦 <b>${counts[3]}</b></span><span>非常不推薦 <b>${counts[4]}</b></span>`;
+        renderDcaDiscoveryRows(errors);
+        const summaryNote = document.getElementById("dca-tier-summary");
+        if (summaryNote) summaryNote.dataset.total = String(valid.length);
+    } catch (e) {
+        list.innerHTML = `<div class="error-text">掃描失敗：${e.message || "請稍後重試"}</div>`;
+    } finally {
+        dcaDiscoveryScanInProgress = false;
+        button.disabled = false;
+        button.textContent = "重新掃描推薦幣種";
+    }
+}
+const dcaModal = document.getElementById("dca-detail-modal");
+const dcaResult = document.getElementById("dca-result");
+const dcaResultHome = dcaResult.parentElement;
+const dcaResultMarker = document.createComment("DCA result home");
+dcaResultHome.insertBefore(dcaResultMarker, dcaResult);
+function closeDcaModal() {
+    dcaModal.hidden = true;
+    dcaResultMarker.parentNode?.insertBefore(dcaResult, dcaResultMarker.nextSibling);
+}
+document.getElementById("dca-modal-close").addEventListener("click", closeDcaModal);
+dcaModal.addEventListener("click", e => { if (e.target.matches("[data-close-dca-modal]")) closeDcaModal(); });
+document.getElementById("dca-discovery-list").addEventListener("click", async e => {
+    const row = e.target.closest("[data-dca-symbol]");
+    if (!row) return;
+    document.getElementById("dca-symbol-input").value = symbolLabel(row.dataset.dcaSymbol);
+    if (!document.getElementById("dca-amount").value) document.getElementById("dca-amount").value = "100";
+    document.getElementById("dca-start").value = row.dataset.dcaStart;
+    document.getElementById("dca-until-now").checked = true;
+    document.getElementById("dca-end").disabled = true;
+    document.getElementById("dca-modal-title").textContent = `${symbolLabel(row.dataset.dcaSymbol)} 定投分析`;
+    document.getElementById("dca-modal-subtitle").textContent = "正在依目前選定的頻率與每次投入金額計算完整情境…";
+    dcaModal.hidden = false;
+    document.getElementById("dca-modal-result-slot").appendChild(dcaResult);
+    await calculateDcaReturn();
+    document.getElementById("dca-modal-subtitle").textContent = `從 Binance 可取得的最早日 K 線開始 · ${({daily:"每天",weekly:"每週",monthly:"每月"})[document.getElementById("dca-frequency").value]} · 每次 ${Number(document.getElementById("dca-amount").value || 100)} USDT`;
+});
+document.getElementById("dca-scan-btn").addEventListener("click", scanDcaRecommendations);
+document.getElementById("dca-frequency")?.addEventListener("change", () => scanDcaRecommendations());
+document.getElementById("dca-scan-universe")?.addEventListener("change", () => scanDcaRecommendations());
+document.getElementById("dca-discovery-search")?.addEventListener("input", () => renderDcaDiscoveryRows());
+document.getElementById("dca-tier-filter")?.addEventListener("change", () => renderDcaDiscoveryRows());
+
+
+// ==================== V5 multi-timeframe alert engine + persistent history + Web Push ====================
+let alertsLastLoaded = 0;
+let alertsScanInProgress = false;
+let alertsServerMode = false;
+const ALERT_INTERVALS = ['15m', '1h', '4h'];
+const ALERT_DCA_FREQUENCIES = ['daily', 'weekly', 'monthly'];
+const alertDailyCache = new Map();
+const ALERT_HISTORY_KEY = 'cpc_alert_history_v5';
+const ALERT_CROSS_KEY = 'cpc_alert_cross_state_v5';
+const ALERT_NOTIFIED_KEY = 'cpc_alert_notified_v5';
+const ALERT_TECH_STATE_KEY = 'cpc_alert_technical_state_v5';
+const alertPreviousCross = new Map();
+const alertPreviousTechnical = new Map();
+let alertHistory = [];
+try { alertHistory = JSON.parse(localStorage.getItem(ALERT_HISTORY_KEY) || '[]'); if (!Array.isArray(alertHistory)) alertHistory = []; } catch { alertHistory = []; }
+try { const saved = JSON.parse(localStorage.getItem(ALERT_CROSS_KEY) || '{}'); Object.entries(saved).forEach(([k,v]) => alertPreviousCross.set(k,v)); } catch {}
+try { const saved = JSON.parse(localStorage.getItem(ALERT_TECH_STATE_KEY) || '{}'); Object.entries(saved).forEach(([k,v]) => alertPreviousTechnical.set(k,v)); } catch {}
+function persistAlertHistory() { alertHistory = alertHistory.slice(0, 300); try { localStorage.setItem(ALERT_HISTORY_KEY, JSON.stringify(alertHistory)); } catch {} }
+function rememberAlert(signal) {
+    if (alertHistory.some(x => x.id === (signal.id || signal.key))) return false;
+    const item = { ...signal, id: signal.id || signal.key || `${signal.symbol}:${signal.interval}:${signal.direction}:${Date.now()}`, timestamp: signal.timestamp || Date.now() };
+    alertHistory.unshift(item); persistAlertHistory(); return true;
+}
+function emaSeries(values, period) {
+    if (!values.length) return [];
+    const alpha = 2 / (period + 1), out = [values[0]];
+    for (let i = 1; i < values.length; i++) out.push(values[i] * alpha + out[i - 1] * (1 - alpha));
+    return out;
+}
+function rsiSeries(closes, period = 14) {
+    if (closes.length <= period) return [];
+    let gain = 0, loss = 0;
+    for (let i = 1; i <= period; i++) { const d = closes[i] - closes[i - 1]; if (d > 0) gain += d; else loss -= d; }
+    let ag = gain / period, al = loss / period;
+    const out = Array(period).fill(null); out.push(al === 0 ? 100 : 100 - 100 / (1 + ag / al));
+    for (let i = period + 1; i < closes.length; i++) { const d = closes[i] - closes[i - 1]; ag = (ag * (period - 1) + Math.max(0, d)) / period; al = (al * (period - 1) + Math.max(0, -d)) / period; out.push(al === 0 ? 100 : 100 - 100 / (1 + ag / al)); }
+    return out;
+}
+function dcaAverageForFrequency(candles, frequency) {
+    if (!candles?.length) return null;
+    const sampled = []; let next = Number(candles[0][0]);
+    for (const c of candles) { const ts = Number(c[0]); if (ts + 12 * 3600000 < next) continue; const close = Number(c[4]); if (close > 0) sampled.push(close); if (frequency === 'daily') next = ts + 86400000; else if (frequency === 'weekly') next = ts + 7 * 86400000; else { const d = new Date(ts); d.setUTCMonth(d.getUTCMonth() + 1); next = d.getTime(); } }
+    const inverseSum = sampled.reduce((sum, price) => sum + 1 / price, 0); return inverseSum > 0 ? sampled.length / inverseSum : null;
+}
+function latestMacdHistogram(closes) { const e12 = emaSeries(closes, 12), e26 = emaSeries(closes, 26), line = e12.map((v, i) => v - e26[i]), signal = emaSeries(line, 9); return line.map((v, i) => v - signal[i]); }
+function analyzeTechnical(symbol, ticker, candles, interval) {
+    if (!candles || candles.length < 65) return null;
+    const closed = candles.slice(0, -1), closes = closed.map(c => Number(c[4])), volumes = closed.map(c => Number(c[7]));
+    if (closes.length < 55) return null;
+    const price = Number(ticker.lastPrice), e9 = emaSeries(closes, 9), e21 = emaSeries(closes, 21), hist = latestMacdHistogram(closes), rsi = rsiSeries(closes, 14).filter(Number.isFinite);
+    const i = closes.length - 1, h = hist[i], hp = hist[i-1], hpp = hist[i-2], r = rsi.at(-1), rp = rsi.at(-2);
+    const baseVol = volumes.slice(-21, -1).reduce((a,b)=>a+b,0) / Math.max(1, volumes.slice(-21,-1).length), currentVol = Number(candles.at(-1)[7]);
+    const relativeVolume = baseVol > 0 ? currentVol / baseVol : 0;
+    const trs = closed.slice(-14).map((c,j,arr)=>{ const high=Number(c[2]),low=Number(c[3]),prev=j?Number(arr[j-1][4]):Number(closed[Math.max(0,closed.length-15)][4]); return Math.max(high-low,Math.abs(high-prev),Math.abs(low-prev)); });
+    const atr = trs.reduce((a,b)=>a+b,0)/Math.max(1,trs.length), current = candles.at(-1), candleMove=(Number(current[4])-Number(current[1]))/Number(current[1])*100;
+    const longEma=e9[i]>e21[i], shortEma=e9[i]<e21[i], aboveEma=price>e21[i], belowEma=price<e21[i];
+    const macdLongStrong=h>0&&h>hp&&hp>=hpp, macdLongEarly=h<0&&h>hp&&hp>hpp, macdShortStrong=h<0&&h<hp&&hp<=hpp, macdShortEarly=h>0&&h<hp&&hp<hpp;
+    const rsiLong=(r>=45&&r<=68&&r>=rp)||(r<35&&r>rp+1.5), rsiShort=(r>=32&&r<=55&&r<=rp)||(r>70&&r<rp-1.5);
+    const volumeBoost=relativeVolume>=1.5, green=Number(current[4])>Number(current[1]), red=Number(current[4])<Number(current[1]);
+    const longScore=(longEma?1:0)+(aboveEma?1:0)+(macdLongStrong?2:macdLongEarly?1:0)+(rsiLong?1:0)+(volumeBoost&&green?1:0);
+    const shortScore=(shortEma?1:0)+(belowEma?1:0)+(macdShortStrong?2:macdShortEarly?1:0)+(rsiShort?1:0)+(volumeBoost&&red?1:0);
+    let direction=null,score=0;
+    if(longScore>=5&&longScore>=shortScore+2&&(longEma||macdLongStrong||macdLongEarly)){direction='LONG';score=longScore;}
+    else if(shortScore>=5&&shortScore>=longScore+2&&(shortEma||macdShortStrong||macdShortEarly)){direction='SHORT';score=shortScore;}
+    const previousKey=`${symbol}:${interval}`, previousDirection=alertPreviousTechnical.get(previousKey)||'NONE';
+    if(!direction){alertPreviousTechnical.set(previousKey,'NONE');try{localStorage.setItem(ALERT_TECH_STATE_KEY,JSON.stringify(Object.fromEntries(alertPreviousTechnical)));}catch{}return null;}
+    alertPreviousTechnical.set(previousKey,direction);try{localStorage.setItem(ALERT_TECH_STATE_KEY,JSON.stringify(Object.fromEntries(alertPreviousTechnical)));}catch{}
+    if(previousDirection===direction)return null;
+    const candleCloseTime=Number(closed.at(-1)[6]), id=`TECH:${symbol}:${interval}:${direction}:${candleCloseTime}`;
+    const reasons=[
+        `EMA9/21：${longEma?'快線在上，趨勢偏多':shortEma?'快線在下，趨勢偏空':'均線糾結'}`,
+        `MACD 柱體 ${h>=0?'正值':'負值'}；${macdLongStrong||macdShortStrong?'連續擴大，動能延續':macdLongEarly||macdShortEarly?'柱體收斂，反向動能增強':'動能未確認'}`,
+        `RSI(14) ${r.toFixed(1)}：${r<30?'超賣，追空風險偏高':r>70?'超買，追多風險偏高':rsiLong?'偏多區間/回升':rsiShort?'偏空區間/回落':'中性'}`,
+        `相對成交量 ${relativeVolume.toFixed(2)}×（對比前 20 根已收盤 K 線平均）`,
+        `ATR(14) 約 ${formatPrice(symbol,atr)} USDT（最近 14 根已收盤 K 線平均真實波動）`,
+        `當根 K 線變化 ${formatPct(candleMove)}`,
+        `綜合建議：${direction==='LONG'?'多方一致度達 5/6 分，優先留意做多條件':'空方一致度達 5/6 分，優先留意做空條件'}；${r<30&&direction==='SHORT'?'RSI 超賣，避免無止損追空':r>70&&direction==='LONG'?'RSI 超買，避免無止損追多':'等待訊號持續確認並控制風險'}`
+    ];
+    return {id,key:id,symbol,price,change:Number(ticker.priceChangePercent),interval:({'15m':'15 分鐘','1h':'1 小時','4h':'4 小時'})[interval],intervalCode:interval,direction,score,relativeVolume,rsi:r,atr,kind:`多空共振（${score}/6）`,reasons,timestamp:Date.now(),candleCloseTime};
+}
+function detectDcaCross(symbol, price, dailyCandles) {
+    const signals=[];
+    for(const frequency of ALERT_DCA_FREQUENCIES){const avg=dcaAverageForFrequency(dailyCandles,frequency);if(!(avg>0))continue;const pct=(price-avg)/avg*100,sign=pct>=0?'POS':'NEG',key=`${symbol}:${frequency}`,previous=alertPreviousCross.get(key);alertPreviousCross.set(key,sign);
+        if(previous&&previous!==sign){const direction=previous==='NEG'?'LONG':'SHORT',id=`DCA:${symbol}:${frequency}:${direction}:${Date.now()}`;signals.push({id,key:id,symbol,price,direction,interval:({daily:'每日定投',weekly:'每週定投',monthly:'每月定投'})[frequency],score:1,dcaAvg:avg,dcaPct:pct,kind:`${({daily:'每日',weekly:'每週',monthly:'每月'})[frequency]}定投均價跨零`,timestamp:Date.now(),reasons:[`定投均價 ${formatPrice(symbol,avg)} USDT`,`現價與均價差 ${formatPct(pct)}`,previous==='NEG'?'差值由負轉正：偏多提示':'差值由正轉負：偏空提示']});}
+    }
+    try{localStorage.setItem(ALERT_CROSS_KEY,JSON.stringify(Object.fromEntries(alertPreviousCross)));}catch{}
+    return signals;
+}
+async function fetchAlertKlines(symbol,interval,limit){const url=new URL('https://api.binance.com/api/v3/klines');url.searchParams.set('symbol',symbol);url.searchParams.set('interval',interval);url.searchParams.set('limit',String(limit));const res=await fetch(url,{cache:'no-store'});if(!res.ok)throw new Error(`K 線讀取失敗 ${symbol} ${interval}`);return res.json();}
+function renderAlertHistory(rows, statusText) {
+    const list=document.getElementById('alerts-list'); if(!list)return;
+    const sorted=[...(rows||[])].sort((a,b)=>Number(b.timestamp||0)-Number(a.timestamp||0)).slice(0,150);
+    list.innerHTML=sorted.map(r=>`<article class="alert-row alert-row-high ${r.direction==='LONG'?'alert-long':'alert-short'}"><div class="alert-coin"><strong>${symbolLabel(r.symbol)} <span class="direction-pill ${r.direction==='LONG'?'signal-long':'signal-short'}">${r.direction==='LONG'?'做多':'做空'}</span></strong><small>${r.interval||r.intervalCode||'—'} · ${r.kind||'條件觸發'} · ${new Date(Number(r.timestamp||Date.now())).toLocaleString('zh-TW',{hour12:false})}</small></div><div class="alert-change ${r.direction==='LONG'?'market-up':'market-down'}">${formatPrice(r.symbol,r.price)}<small>USDT · ${r.relativeVolume==null?'定投跨零':`量能 ${Number(r.relativeVolume).toFixed(2)}×`}</small></div><div class="alert-reasons">${(r.reasons||[]).map(x=>`<span>${x}</span>`).join('')}</div></article>`).join('')||'<div class="muted">尚無觸發記錄。系統會持續掃描各週期；符合完整條件才新增告警。</div>';
+    const status=document.getElementById('alerts-status');if(status)status.textContent=statusText;
+}
+async function tryLoadServerAlerts(force=false) {
+    try {
+        if(force) await fetch('/api/scan',{method:'POST'}).catch(()=>null);
+        const res=await fetch('/api/alerts',{cache:'no-store'});if(!res.ok)return false;
+        const data=await res.json();if(!Array.isArray(data.alerts))return false;
+        alertsServerMode=true;
+        renderAlertHistory(data.alerts,`後端常駐監控 · 全部合格 USDT 現貨幣種（排除美元穩定幣） · ${data.lastScanCount||0} 種已掃描 · ${data.lastScanAt?'最近掃描 '+new Date(data.lastScanAt).toLocaleString('zh-TW',{hour12:false}):'首次掃描中'}${data.scanning?' · 掃描中':''}${data.lastScanErrors?` · ${data.lastScanErrors} 項資料錯誤`:''}${data.lastScanError?` · ${data.lastScanError}`:''}`);
+        alertsLastLoaded=Date.now();return true;
+    } catch { return false; }
+}
+async function notifyAlert(signal) {
+    if(localStorage.getItem('cpc_alert_notifications')!=='on'||!('Notification'in window)||Notification.permission!=='granted')return;
+    let sent=[];try{sent=JSON.parse(localStorage.getItem(ALERT_NOTIFIED_KEY)||'[]');}catch{}
+    const id=signal.id||signal.key;if(sent.includes(id))return;
+    try { const body=`${signal.kind||'多空訊號'} · 現價 ${formatPrice(signal.symbol,signal.price)} USDT · ${(signal.reasons||[]).slice(0,2).join('；')}`;if('serviceWorker'in navigator){const reg=await navigator.serviceWorker.ready;await reg.showNotification(`${signal.direction==='LONG'?'🟢 做多':'🔴 做空'}｜${symbolLabel(signal.symbol)} ${signal.interval||''}`,{body,icon:'./icon-192.png',tag:id,renotify:false,data:{url:'./'}});}else new Notification(`${signal.direction==='LONG'?'做多':'做空'}｜${symbolLabel(signal.symbol)}`,{body});sent.unshift(id);localStorage.setItem(ALERT_NOTIFIED_KEY,JSON.stringify(sent.slice(0,500)));}catch(e){console.warn('通知發送失敗',e);}
+}
+async function loadMarketAlerts(force=false) {
+    const list=document.getElementById('alerts-list'),status=document.getElementById('alerts-status');
+    if(!list||alertsScanInProgress||(!force&&Date.now()-alertsLastLoaded<50000))return;
+    alertsScanInProgress=true;
+    try {
+        if(await tryLoadServerAlerts(force))return;
+        alertsServerMode=false;
+        status.textContent='正在掃描 Binance 全部合格 USDT 現貨幣種的多空指標…';
+        const [exchangeRes,tickerRes]=await Promise.all([fetch('https://api.binance.com/api/v3/exchangeInfo',{cache:'no-store'}),fetch('https://api.binance.com/api/v3/ticker/24hr',{cache:'no-store'})]);
+        if(!exchangeRes.ok||!tickerRes.ok)throw new Error('Binance 市場資料暫時不可用');
+        const exchange=await exchangeRes.json(),tickers=await tickerRes.json();
+        const allowed=new Set((exchange.symbols||[]).filter(x=>x.status==='TRADING'&&x.quoteAsset==='USDT'&&x.isSpotTradingAllowed!==false&&!isExcludedStableSymbol(`${x.baseAsset}USDT`)).map(x=>x.symbol));
+        const tickerMap=new Map(tickers.filter(t=>allowed.has(t.symbol)&&Number(t.lastPrice)>0).map(t=>[t.symbol,t]));
+        const custom=(marketCustomSymbols||[]).filter(s=>allowed.has(s));
+        const selected=[...new Set([...tickerMap.keys(),...custom])].map(s=>tickerMap.get(s)).filter(Boolean).sort((a,b)=>Number(b.quoteVolume)-Number(a.quoteVolume));
+        let checked=0;const fresh=[];
+        for(let i=0;i<selected.length;i+=8){
+            const batch=await Promise.all(selected.slice(i,i+8).map(async ticker=>{const out=[];try{let daily=alertDailyCache.get(ticker.symbol);if(!daily||Date.now()-daily.at>6*3600000){daily={candles:await fetchAlertKlines(ticker.symbol,'1d',1000),at:Date.now()};alertDailyCache.set(ticker.symbol,daily);}out.push(...detectDcaCross(ticker.symbol,Number(ticker.lastPrice),daily.candles));}catch{}
+                for(const interval of ALERT_INTERVALS){try{const candles=await fetchAlertKlines(ticker.symbol,interval,100);const signal=analyzeTechnical(ticker.symbol,ticker,candles,interval);if(signal)out.push(signal);}catch{}}
+                return out;}));
+            for(const signal of batch.flat())if(rememberAlert(signal))fresh.push(signal);checked+=batch.length;
+            status.textContent=`全市場掃描進度 ${checked}/${selected.length} 個交易對…`;
+        }
+        for(const signal of fresh)await notifyAlert(signal);
+        renderAlertHistory(alertHistory,`瀏覽器執行中掃描 · ${selected.length} 個合格 USDT 現貨對 · 保留 ${alertHistory.length} 筆歷史警示 · 每分鐘重查（關閉頁面後請部署後端推播） · ${formatUpdatedTime()}`);
+        alertsLastLoaded=Date.now();
+    }catch(error){status.textContent=`警示載入失敗：${error.message||'請稍後重試'}`;if(!alertHistory.length)list.innerHTML='<div class="error-text">無法取得 Binance 警示資料，請檢查網路或部署後端。</div>';else renderAlertHistory(alertHistory,`目前無法更新市場資料，已保留 ${alertHistory.length} 筆歷史警示：${error.message||'連線失敗'}`);}
+    finally{alertsScanInProgress=false;}
+}
+document.getElementById('alerts-refresh-btn')?.addEventListener('click',()=>loadMarketAlerts(true));
+document.getElementById('alerts-notify-btn')?.addEventListener('click',async()=>{
+    const status=document.getElementById('alerts-status');
+    if(!('Notification'in window)){status.textContent='此瀏覽器不支援通知。';return;}
+    const permission=Notification.permission==='granted'?'granted':await Notification.requestPermission();
+    if(permission!=='granted'){localStorage.setItem('cpc_alert_notifications','off');status.textContent='通知權限未開啟，請到瀏覽器網站設定允許通知。';return;}
+    localStorage.setItem('cpc_alert_notifications','on');
+    try {
+        const keyRes=await fetch('/api/push/public-key',{cache:'no-store'});if(!keyRes.ok)throw new Error('後端尚未部署');const {publicKey}=await keyRes.json();
+        const reg=await navigator.serviceWorker.ready;let subscription=await reg.pushManager.getSubscription();
+        if(!subscription)subscription=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:(()=>{const raw=publicKey.replace(/-/g,'+').replace(/_/g,'/');const padded=raw+'='.repeat((4-raw.length%4)%4);return Uint8Array.from(atob(padded),c=>c.charCodeAt(0));})()});
+        const saveRes=await fetch('/api/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(subscription)});if(!saveRes.ok)throw new Error('推播訂閱未能保存');
+        status.textContent='手機推播已綁定後端。伺服器會每分鐘掃描並保存歷史警示；即使關閉 App，也會在新訊號觸發時推播（需 HTTPS 與後端持續運作）。';
+    }catch(e){status.textContent=`本頁通知已開啟，但未連上後端推播（${e.message}）。要關閉 App 仍通知，請依 DEPLOY.md 部署 HTTPS 後端。`;
+        if(!alertsServerMode)loadMarketAlerts(true);
+    }
+    loadMarketAlerts(true);
+});
+setInterval(()=>{if(localStorage.getItem('cpc_alert_notifications')==='on'||document.querySelector('[data-feature-tab="alerts"]')?.classList.contains('active'))loadMarketAlerts(true);},60000);
+// Immediately load saved history; the server performs background scans independently when deployed.
+loadMarketAlerts(true);

@@ -37,10 +37,11 @@
         </header>
 
         <nav class="feature-tabs" role="tablist" aria-label="功能切換">
-            <button type="button" class="feature-tab active" data-feature-tab="live" role="tab" aria-selected="true">即時報價</button>
+            <button type="button" class="feature-tab active" data-feature-tab="alerts" role="tab" aria-selected="true">異常警示</button>
+            <button type="button" class="feature-tab" data-feature-tab="live" role="tab" aria-selected="false">即時報價</button>
+            <button type="button" class="feature-tab" data-feature-tab="market" role="tab" aria-selected="false">市場總覽</button>
             <button type="button" class="feature-tab" data-feature-tab="dca" role="tab" aria-selected="false">定投報酬</button>
             <button type="button" class="feature-tab" data-feature-tab="kline" role="tab" aria-selected="false">K 棒漲跌幅</button>
-            <button type="button" class="feature-tab" data-feature-tab="market" role="tab" aria-selected="false">市場總覽</button>
         </nav>
 
         <div id="app-status" class="app-status" role="status" aria-live="polite">
@@ -48,7 +49,34 @@
             <span id="app-status-text">準備載入…</span>
         </div>
 
-        <section class="card live-prices feature-panel" data-feature-panel="live" role="tabpanel">
+        <section class="card feature-panel alerts-panel" data-feature-panel="alerts" role="tabpanel" aria-label="異常警示">
+            <div class="section-heading">
+                <div><h2 class="section-title">多空訊號警示</h2><p class="section-hint">後端部署後每分鐘掃描全部合格 Binance USDT 現貨幣種；15 分鐘、1 小時、4 小時任一週期達條件就獨立觸發。警示會保留歷史，不因刷新消失；USD 穩定幣及槓桿代幣排除。</p></div>
+                <button type="button" id="alerts-refresh-btn" class="market-refresh-btn">更新警示</button>
+            </div>
+            <div class="alert-toolbar"><span id="alerts-status" class="market-status" role="status" aria-live="polite">載入歷史警示並連接監控服務…</span><button type="button" id="alerts-notify-btn" class="market-refresh-btn">啟用背景手機推播</button></div>
+            <div id="alerts-list" class="alerts-list"><div class="muted">載入歷史警示中；後端部署完成後會持續監控並推播。</div></div>
+            <div class="alert-legend">
+                <strong>訊號速讀</strong>
+                <div class="alert-legend-grid">
+                    <span><b class="signal-long">做多</b> 多頭指標與量能確認，或定投均價差由負轉正</span>
+                    <span><b class="signal-short">做空</b> 空頭指標與量能確認，或定投均價差由正轉負</span>
+                    <span><b>跨零告警</b> 每日／每週／每月定投均價的「現價差」跨越 0% 才觸發一次</span>
+                    <span><b>時間框架</b> 15 分鐘、1 小時、4 小時；日線定投均價另行追蹤</span>
+                </div>
+            </div>
+            <details class="alert-glossary"><summary>指標白話備忘（點擊展開）</summary><ul>
+                <li><b>相對成交量：</b>目前這根 K 線的成交量除以前 20 根已收盤 K 線平均；2.57× 即為平均的 2.57 倍。量能放大只算確認條件，還要看價格與多空方向。</li>
+                <li><b>EMA 9／21：</b>較快與較慢的平均價格；快線在慢線上方偏多，下方偏空。</li>
+                <li><b>MACD：</b>系統會同時看柱體正負與連續變化；柱體連續擴大代表該方向動能延續，柱體收斂則代表反向動能增加，不會只看單一正負值。</li>
+                <li><b>RSI(14)：</b>14 代表最近 14 個週期的動能計算；低於 30 常見於超賣、高於 70 常見於超買。系統會結合 RSI 方向與趨勢，不單憑超買/超賣觸發。</li>
+                <li><b>ATR(14)：</b>14 代表最近 14 根 K 線，取平均真實波動幅度；數值越大代表該幣在這個週期通常波動越大，不代表漲或跌。</li>
+                <li><b>定投均價跨零：</b>比較現價與按日／週／月固定投入所形成的歷史平均成本；差值負轉正代表現價由均價下方穿至上方，正轉負則相反。這是成本位置變化，不等同趨勢反轉。</li>
+            </ul></details>
+            <p class="field-help">要在完全關閉 App 後仍持續監控，請依專案內 DEPLOY.md 部署常駐後端，並使用 HTTPS 網址啟用背景推播。只把前端檔案放在靜態主機時，仍只能在頁面執行期間掃描。</p>
+        </section>
+
+        <section class="card live-prices feature-panel" data-feature-panel="live" role="tabpanel" hidden>
             <div class="section-heading">
                 <h2 class="section-title">即時報價</h2>
                 <span id="last-updated" class="last-updated">尚未更新</span>
@@ -75,7 +103,7 @@
                 <div class="market-setting-field market-symbol-field">
                     <label for="market-symbol-input">自訂觀察幣種</label>
                     <textarea id="market-symbol-input" rows="2" placeholder="例如：BTC, ETH, SOL, LINK（可用逗號、空格或換行分隔）"></textarea>
-                    <small>輸入幣名或交易對，例如 BTC / BTCUSDT。留空則使用預設觀察清單。設定會保存在此瀏覽器。</small>
+                    <small>輸入幣名或交易對，例如 BTC / BTCUSDT。會與預設市值前 25 大清單合併，不會取代主流幣。設定會保存在此瀏覽器。</small>
                 </div>
                 <div class="market-setting-field market-count-field">
                     <label for="market-rank-count">每個排行顯示數量</label>
@@ -85,8 +113,8 @@
                 <button type="button" id="market-apply-settings" class="market-refresh-btn">套用設定</button>
             </section>
             <div class="market-metrics" id="market-metrics">
-                <article class="market-metric"><span class="metric-title">觀察幣種上漲</span><strong id="market-up-count">—</strong><span class="metric-help">市值前 25 個可交易幣種中，價格高於 24 小時前的數量。</span></article>
-                <article class="market-metric"><span class="metric-title">觀察幣種下跌</span><strong id="market-down-count">—</strong><span class="metric-help">市值前 25 個可交易幣種中，價格低於 24 小時前的數量。</span></article>
+                <article class="market-metric"><span class="metric-title">觀察幣種上漲</span><strong id="market-up-count">—</strong><span class="metric-help">目前觀察清單中，價格高於 24 小時前的幣種數量。</span></article>
+                <article class="market-metric"><span class="metric-title">觀察幣種下跌</span><strong id="market-down-count">—</strong><span class="metric-help">目前觀察清單中，價格低於 24 小時前的幣種數量。</span></article>
                 <article class="market-metric"><span class="metric-title">上漲比例</span><strong id="market-up-ratio">—</strong><span class="metric-help">上漲幣種占本次觀察清單的比例；越高代表上漲較普遍。</span></article>
                 <article class="market-metric"><span class="metric-title">24 小時成交額</span><strong id="market-total-volume">—</strong><span class="metric-help">觀察清單的 USDT 成交額加總，不是流入市場的資金量。</span></article>
             </div>
@@ -103,11 +131,6 @@
             </section>
             <div class="market-rank-grid">
                 <section class="market-rank-card">
-                    <div class="market-rank-heading"><h3>成交額排行 Top <span id="market-volume-count-label">10</span></h3><span class="info-tip" title="成交額是 24 小時內成交的交易金額。成交額高通常代表交易較活躍，但不代表一定會上漲。">i</span></div>
-                    <p class="market-explainer">看哪些幣最熱門、交易最活躍。此處按 24 小時 USDT 成交額排序。</p>
-                    <div class="market-table-wrap"><table class="market-table"><thead><tr><th># / 幣種</th><th>價格</th><th>24h 漲跌</th><th>成交額</th></tr></thead><tbody id="market-volume-body"><tr><td colspan="4" class="muted">載入中…</td></tr></tbody></table></div>
-                </section>
-                <section class="market-rank-card">
                     <div class="market-rank-heading"><h3>漲幅排行 Top <span id="market-gainers-count-label">10</span></h3><span class="info-tip" title="顯示符合成交額門檻的 USDT 現貨交易對中，24 小時漲幅最高的幣種。高漲幅也可能伴隨較高波動風險。">i</span></div>
                     <p class="market-explainer">漲幅高表示過去 24 小時價格上升較多，不代表現在追買就會繼續漲。</p>
                     <div class="market-table-wrap"><table class="market-table"><thead><tr><th># / 幣種</th><th>價格</th><th>24h 漲跌</th><th>成交額</th></tr></thead><tbody id="market-gainers-body"><tr><td colspan="4" class="muted">載入中…</td></tr></tbody></table></div>
@@ -117,6 +140,14 @@
                     <p class="market-explainer">用來找出弱勢幣種及市場風險，不要只因跌幅大就認為值得抄底。</p>
                     <div class="market-table-wrap"><table class="market-table"><thead><tr><th># / 幣種</th><th>價格</th><th>24h 漲跌</th><th>成交額</th></tr></thead><tbody id="market-losers-body"><tr><td colspan="4" class="muted">載入中…</td></tr></tbody></table></div>
                 </section>
+                <section class="market-rank-card market-volume-collapsible">
+                    <details>
+                        <summary><span>成交額排行 Top <span id="market-volume-count-label">10</span></span><span class="info-tip" title="成交額是 24 小時內成交的交易金額。成交額高通常代表交易較活躍，但不代表一定會上漲。">i</span></summary>
+                        <p class="market-explainer">看哪些幣最熱門、交易最活躍。此處按 24 小時 USDT 成交額排序。</p>
+                        <div class="market-table-wrap"><table class="market-table"><thead><tr><th># / 幣種</th><th>價格</th><th>24h 漲跌</th><th>成交額</th></tr></thead><tbody id="market-volume-body"><tr><td colspan="4" class="muted">載入中…</td></tr></tbody></table></div>
+                    </details>
+                </section>
+
             </div>
             <div class="market-legend"><strong>名詞小抄</strong><ul><li><b>24h 漲跌：</b>現在價格相較約 24 小時前的變化百分比。</li><li><b>成交額：</b>24 小時內成交的總金額；不等於買方淨流入。</li><li><b>市場廣度：</b>觀察清單中上漲和下跌的分布，幫助判斷漲勢是否普遍。</li><li><b>波動風險：</b>漲幅榜或跌幅榜常有較大波動，排行不是投資建議。</li></ul></div>
         </section>
@@ -126,6 +157,27 @@
                 <div>
                     <h2 class="section-title">定投報酬</h2>
                     <p class="section-hint">輸入定投期間與金額，依 Binance 歷史價格估算每次買入後的最終價值</p>
+                </div>
+            </div>
+
+            <section class="dca-discovery">
+                <div class="section-heading"><h3 class="section-title">定投推薦總覽</h3><span class="last-updated">依 Binance 可取得的歷史資料</span></div>
+                <p class="section-hint">自動掃描幣種，依所選定投頻率的歷史定投平均成本與即時現價分級。點選幣種可查看完整最佳／最差情境。</p>
+                <div class="dca-discovery-controls">
+                    <label>掃描範圍 <select id="dca-scan-universe"><option value="all" selected>全部 Binance USDT 現貨（全幣種）</option><option value="top25">市值前 25 大</option></select></label>
+                    <label>搜尋幣種 <input id="dca-discovery-search" type="search" placeholder="例如 BTC、SOL" autocomplete="off"></label>
+                    <label>推薦層級 <select id="dca-tier-filter"><option value="all">全部層級</option><option value="0">非常推薦</option><option value="1">推薦</option><option value="2">普通</option><option value="3">不推薦</option><option value="4">非常不推薦</option></select></label>
+                    <button type="button" id="dca-scan-btn" class="btn-primary">掃描推薦幣種</button>
+                </div>
+                <div class="dca-tier-summary" id="dca-tier-summary"><span>尚未掃描</span></div>
+                <div class="dca-discovery-list" id="dca-discovery-list"><div class="muted">按「掃描推薦幣種」開始分析；首次掃描會需要一些時間。</div></div>
+                <p class="field-help">注意：分級只反映現價相對該幣種歷史定投成本的位置，不代表未來獲利保證；新上架、資料缺漏或流動性較低的幣種可能無法完整分析。</p>
+            </section>
+            <div id="dca-detail-modal" class="dca-modal" hidden role="dialog" aria-modal="true" aria-labelledby="dca-modal-title">
+                <div class="dca-modal-backdrop" data-close-dca-modal></div>
+                <div class="dca-modal-content">
+                    <div class="dca-modal-header"><div><h3 id="dca-modal-title">幣種定投詳情</h3><p id="dca-modal-subtitle" class="section-hint"></p></div><button type="button" id="dca-modal-close" class="refresh-btn" aria-label="關閉">×</button></div>
+                    <div id="dca-modal-result-slot"></div>
                 </div>
             </div>
 
@@ -160,7 +212,8 @@
                 </div>
                 <div class="form-row">
                     <label for="dca-amount">每次定投金額（USDT）</label>
-                    <input type="number" id="dca-amount" min="0.01" step="0.01" inputmode="decimal" placeholder="例如 100">
+                    <input type="number" id="dca-amount" min="0.01" step="0.01" inputmode="decimal" value="100" placeholder="預設 100">
+                    <small class="field-help">未填或清空時自動使用 100 USDT。</small>
                 </div>
             </div>
 
@@ -258,7 +311,7 @@
 
         <footer class="app-footer">
             <span>行情來源：Binance Spot · 恐慌指數：Alternative.me</span>
-            <span>純前端 PWA</span>
+            <span>PWA 前端＋常駐監控後端（需依 DEPLOY.md 部署）</span>
         </footer>
     </main>
 
