@@ -756,7 +756,6 @@ function initFeatureTabs() {
     tabs.forEach(tab => tab.addEventListener("click", () => {
         activate(tab.dataset.featureTab);
         if (tab.dataset.featureTab === "market") loadMarketOverview();
-        if (tab.dataset.featureTab === "alerts") loadMarketAlerts();
     }));
     activate("alerts");
 }
@@ -1358,164 +1357,162 @@ document.getElementById("dca-discovery-search")?.addEventListener("input", () =>
 document.getElementById("dca-tier-filter")?.addEventListener("change", () => renderDcaDiscoveryRows());
 
 
-// ==================== V5 multi-timeframe alert engine + persistent history + Web Push ====================
-let alertsLastLoaded = 0;
-let alertsScanInProgress = false;
-let alertsServerMode = false;
-const ALERT_INTERVALS = ['15m', '1h', '4h'];
-const ALERT_DCA_FREQUENCIES = ['daily', 'weekly', 'monthly'];
-const alertDailyCache = new Map();
-const ALERT_HISTORY_KEY = 'cpc_alert_history_v5';
-const ALERT_CROSS_KEY = 'cpc_alert_cross_state_v5';
-const ALERT_NOTIFIED_KEY = 'cpc_alert_notified_v5';
-const ALERT_TECH_STATE_KEY = 'cpc_alert_technical_state_v5';
-const alertPreviousCross = new Map();
-const alertPreviousTechnical = new Map();
-let alertHistory = [];
-try { alertHistory = JSON.parse(localStorage.getItem(ALERT_HISTORY_KEY) || '[]'); if (!Array.isArray(alertHistory)) alertHistory = []; } catch { alertHistory = []; }
-try { const saved = JSON.parse(localStorage.getItem(ALERT_CROSS_KEY) || '{}'); Object.entries(saved).forEach(([k,v]) => alertPreviousCross.set(k,v)); } catch {}
-try { const saved = JSON.parse(localStorage.getItem(ALERT_TECH_STATE_KEY) || '{}'); Object.entries(saved).forEach(([k,v]) => alertPreviousTechnical.set(k,v)); } catch {}
-function persistAlertHistory() { alertHistory = alertHistory.slice(0, 300); try { localStorage.setItem(ALERT_HISTORY_KEY, JSON.stringify(alertHistory)); } catch {} }
-function rememberAlert(signal) {
-    if (alertHistory.some(x => x.id === (signal.id || signal.key))) return false;
-    const item = { ...signal, id: signal.id || signal.key || `${signal.symbol}:${signal.interval}:${signal.direction}:${Date.now()}`, timestamp: signal.timestamp || Date.now() };
-    alertHistory.unshift(item); persistAlertHistory(); return true;
-}
-function emaSeries(values, period) {
-    if (!values.length) return [];
-    const alpha = 2 / (period + 1), out = [values[0]];
-    for (let i = 1; i < values.length; i++) out.push(values[i] * alpha + out[i - 1] * (1 - alpha));
+// ==================== Multi-factor crypto technical analysis engine ====================
+// The previous anomaly-alert / DCA-average-cross alert engine is intentionally retired.
+const ANALYSIS_INTERVALS = ['1d', '4h', '1h', '15m'];
+const ANALYSIS_INTERVAL_LABELS = {'5m':'5 分鐘','15m':'15 分鐘','1h':'1 小時','4h':'4 小時','1d':'1 日'};
+const analysisRunButton = document.getElementById('analysis-run-btn');
+
+function analysisEma(values, period) {
+    if (values.length < period) return [];
+    const alpha = 2 / (period + 1), out = Array(values.length).fill(null);
+    let seed = values.slice(0, period).reduce((a,b)=>a+b,0)/period;
+    out[period-1] = seed;
+    for (let i=period;i<values.length;i++) out[i] = values[i]*alpha + out[i-1]*(1-alpha);
     return out;
 }
-function rsiSeries(closes, period = 14) {
-    if (closes.length <= period) return [];
-    let gain = 0, loss = 0;
-    for (let i = 1; i <= period; i++) { const d = closes[i] - closes[i - 1]; if (d > 0) gain += d; else loss -= d; }
-    let ag = gain / period, al = loss / period;
-    const out = Array(period).fill(null); out.push(al === 0 ? 100 : 100 - 100 / (1 + ag / al));
-    for (let i = period + 1; i < closes.length; i++) { const d = closes[i] - closes[i - 1]; ag = (ag * (period - 1) + Math.max(0, d)) / period; al = (al * (period - 1) + Math.max(0, -d)) / period; out.push(al === 0 ? 100 : 100 - 100 / (1 + ag / al)); }
+function analysisRsi(closes, period=14) {
+    if(closes.length<period+1)return [];
+    let gain=0,loss=0;
+    for(let i=1;i<=period;i++){const d=closes[i]-closes[i-1];if(d>0)gain+=d;else loss-=d;}
+    let ag=gain/period,al=loss/period,out=Array(closes.length).fill(null);
+    out[period]=al===0?100:100-100/(1+ag/al);
+    for(let i=period+1;i<closes.length;i++){const d=closes[i]-closes[i-1];ag=(ag*(period-1)+Math.max(d,0))/period;al=(al*(period-1)+Math.max(-d,0))/period;out[i]=al===0?100:100-100/(1+ag/al);}
     return out;
 }
-function dcaAverageForFrequency(candles, frequency) {
-    if (!candles?.length) return null;
-    const sampled = []; let next = Number(candles[0][0]);
-    for (const c of candles) { const ts = Number(c[0]); if (ts + 12 * 3600000 < next) continue; const close = Number(c[4]); if (close > 0) sampled.push(close); if (frequency === 'daily') next = ts + 86400000; else if (frequency === 'weekly') next = ts + 7 * 86400000; else { const d = new Date(ts); d.setUTCMonth(d.getUTCMonth() + 1); next = d.getTime(); } }
-    const inverseSum = sampled.reduce((sum, price) => sum + 1 / price, 0); return inverseSum > 0 ? sampled.length / inverseSum : null;
+function analysisMacd(closes) {
+    const e12=analysisEma(closes,12),e26=analysisEma(closes,26);
+    const line=closes.map((_,i)=>e12[i]!=null&&e26[i]!=null?e12[i]-e26[i]:null);
+    const validStart=line.findIndex(Number.isFinite); if(validStart<0)return null;
+    const vals=line.slice(validStart),sig=analysisEma(vals,9),signal=Array(closes.length).fill(null);
+    sig.forEach((v,i)=>{if(v!=null)signal[validStart+i]=v;});
+    const hist=line.map((v,i)=>v!=null&&signal[i]!=null?v-signal[i]:null),i=closes.length-1;
+    if(!Number.isFinite(hist[i])||!Number.isFinite(hist[i-1]))return null;
+    return {line:line[i],signal:signal[i],hist:hist[i],prevHist:hist[i-1],prevLine:line[i-1],prevSignal:signal[i-1],histPrev2:hist[i-2]};
 }
-function latestMacdHistogram(closes) { const e12 = emaSeries(closes, 12), e26 = emaSeries(closes, 26), line = e12.map((v, i) => v - e26[i]), signal = emaSeries(line, 9); return line.map((v, i) => v - signal[i]); }
-function analyzeTechnical(symbol, ticker, candles, interval) {
-    if (!candles || candles.length < 65) return null;
-    const closed = candles.slice(0, -1), closes = closed.map(c => Number(c[4])), volumes = closed.map(c => Number(c[7]));
-    if (closes.length < 55) return null;
-    const price = Number(ticker.lastPrice), e9 = emaSeries(closes, 9), e21 = emaSeries(closes, 21), hist = latestMacdHistogram(closes), rsi = rsiSeries(closes, 14).filter(Number.isFinite);
-    const i = closes.length - 1, h = hist[i], hp = hist[i-1], hpp = hist[i-2], r = rsi.at(-1), rp = rsi.at(-2);
-    const baseVol = volumes.slice(-21, -1).reduce((a,b)=>a+b,0) / Math.max(1, volumes.slice(-21,-1).length), currentVol = Number(candles.at(-1)[7]);
-    const relativeVolume = baseVol > 0 ? currentVol / baseVol : 0;
-    const trs = closed.slice(-14).map((c,j,arr)=>{ const high=Number(c[2]),low=Number(c[3]),prev=j?Number(arr[j-1][4]):Number(closed[Math.max(0,closed.length-15)][4]); return Math.max(high-low,Math.abs(high-prev),Math.abs(low-prev)); });
-    const atr = trs.reduce((a,b)=>a+b,0)/Math.max(1,trs.length), current = candles.at(-1), candleMove=(Number(current[4])-Number(current[1]))/Number(current[1])*100;
-    const longEma=e9[i]>e21[i], shortEma=e9[i]<e21[i], aboveEma=price>e21[i], belowEma=price<e21[i];
-    const macdLongStrong=h>0&&h>hp&&hp>=hpp, macdLongEarly=h<0&&h>hp&&hp>hpp, macdShortStrong=h<0&&h<hp&&hp<=hpp, macdShortEarly=h>0&&h<hp&&hp<hpp;
-    const rsiLong=(r>=45&&r<=68&&r>=rp)||(r<35&&r>rp+1.5), rsiShort=(r>=32&&r<=55&&r<=rp)||(r>70&&r<rp-1.5);
-    const volumeBoost=relativeVolume>=1.5, green=Number(current[4])>Number(current[1]), red=Number(current[4])<Number(current[1]);
-    const longScore=(longEma?1:0)+(aboveEma?1:0)+(macdLongStrong?2:macdLongEarly?1:0)+(rsiLong?1:0)+(volumeBoost&&green?1:0);
-    const shortScore=(shortEma?1:0)+(belowEma?1:0)+(macdShortStrong?2:macdShortEarly?1:0)+(rsiShort?1:0)+(volumeBoost&&red?1:0);
-    let direction=null,score=0;
-    if(longScore>=5&&longScore>=shortScore+2&&(longEma||macdLongStrong||macdLongEarly)){direction='LONG';score=longScore;}
-    else if(shortScore>=5&&shortScore>=longScore+2&&(shortEma||macdShortStrong||macdShortEarly)){direction='SHORT';score=shortScore;}
-    const previousKey=`${symbol}:${interval}`, previousDirection=alertPreviousTechnical.get(previousKey)||'NONE';
-    if(!direction){alertPreviousTechnical.set(previousKey,'NONE');try{localStorage.setItem(ALERT_TECH_STATE_KEY,JSON.stringify(Object.fromEntries(alertPreviousTechnical)));}catch{}return null;}
-    alertPreviousTechnical.set(previousKey,direction);try{localStorage.setItem(ALERT_TECH_STATE_KEY,JSON.stringify(Object.fromEntries(alertPreviousTechnical)));}catch{}
-    if(previousDirection===direction)return null;
-    const candleCloseTime=Number(closed.at(-1)[6]), id=`TECH:${symbol}:${interval}:${direction}:${candleCloseTime}`;
-    const reasons=[
-        `EMA9/21：${longEma?'快線在上，趨勢偏多':shortEma?'快線在下，趨勢偏空':'均線糾結'}`,
-        `MACD 柱體 ${h>=0?'正值':'負值'}；${macdLongStrong||macdShortStrong?'連續擴大，動能延續':macdLongEarly||macdShortEarly?'柱體收斂，反向動能增強':'動能未確認'}`,
-        `RSI(14) ${r.toFixed(1)}：${r<30?'超賣，追空風險偏高':r>70?'超買，追多風險偏高':rsiLong?'偏多區間/回升':rsiShort?'偏空區間/回落':'中性'}`,
-        `相對成交量 ${relativeVolume.toFixed(2)}×（對比前 20 根已收盤 K 線平均）`,
-        `ATR(14) 約 ${formatPrice(symbol,atr)} USDT（最近 14 根已收盤 K 線平均真實波動）`,
-        `當根 K 線變化 ${formatPct(candleMove)}`,
-        `綜合建議：${direction==='LONG'?'多方一致度達 5/6 分，優先留意做多條件':'空方一致度達 5/6 分，優先留意做空條件'}；${r<30&&direction==='SHORT'?'RSI 超賣，避免無止損追空':r>70&&direction==='LONG'?'RSI 超買，避免無止損追多':'等待訊號持續確認並控制風險'}`
-    ];
-    return {id,key:id,symbol,price,change:Number(ticker.priceChangePercent),interval:({'15m':'15 分鐘','1h':'1 小時','4h':'4 小時'})[interval],intervalCode:interval,direction,score,relativeVolume,rsi:r,atr,kind:`多空共振（${score}/6）`,reasons,timestamp:Date.now(),candleCloseTime};
+function analysisAtr(candles, period=14) {
+    if(candles.length<period+1)return null;
+    const tr=[];for(let i=1;i<candles.length;i++){const c=candles[i],p=candles[i-1];tr.push(Math.max(c.high-c.low,Math.abs(c.high-p.close),Math.abs(c.low-p.close)));}
+    return tr.slice(-period).reduce((a,b)=>a+b,0)/period;
 }
-function detectDcaCross(symbol, price, dailyCandles) {
-    const signals=[];
-    for(const frequency of ALERT_DCA_FREQUENCIES){const avg=dcaAverageForFrequency(dailyCandles,frequency);if(!(avg>0))continue;const pct=(price-avg)/avg*100,sign=pct>=0?'POS':'NEG',key=`${symbol}:${frequency}`,previous=alertPreviousCross.get(key);alertPreviousCross.set(key,sign);
-        if(previous&&previous!==sign){const direction=previous==='NEG'?'LONG':'SHORT',id=`DCA:${symbol}:${frequency}:${direction}:${Date.now()}`;signals.push({id,key:id,symbol,price,direction,interval:({daily:'每日定投',weekly:'每週定投',monthly:'每月定投'})[frequency],score:1,dcaAvg:avg,dcaPct:pct,kind:`${({daily:'每日',weekly:'每週',monthly:'每月'})[frequency]}定投均價跨零`,timestamp:Date.now(),reasons:[`定投均價 ${formatPrice(symbol,avg)} USDT`,`現價與均價差 ${formatPct(pct)}`,previous==='NEG'?'差值由負轉正：偏多提示':'差值由正轉負：偏空提示']});}
+function analysisFormat(symbol,n){return Number.isFinite(n)?formatPrice(symbol,n):'資料不足';}
+function analysisPct(n){return Number.isFinite(n)?`${n>=0?'+':''}${n.toFixed(2)}%`:'資料不足';}
+function analysisEscape(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+async function fetchAnalysisCandles(symbol, interval, limit=260) {
+    const u=new URL('https://api.binance.com/api/v3/klines');u.searchParams.set('symbol',symbol);u.searchParams.set('interval',interval);u.searchParams.set('limit',String(limit));
+    const r=await fetch(u.toString(),{cache:'no-store'});if(!r.ok)throw new Error(`${interval} K 線取得失敗（HTTP ${r.status}）`);
+    const raw=await r.json(),now=Date.now();
+    // Exclude the currently forming candle; only closed candles may confirm a signal.
+    return raw.filter(k=>Number(k[6])<now).map(k=>({openTime:+k[0],open:+k[1],high:+k[2],low:+k[3],close:+k[4],volume:+k[5],closeTime:+k[6],quoteVolume:+k[7],trades:+k[8]})).filter(c=>[c.open,c.high,c.low,c.close,c.volume].every(Number.isFinite));
+}
+function analysisPivots(candles, radius=2) {
+    const highs=[],lows=[];
+    for(let i=radius;i<candles.length-radius;i++){
+        let hi=true,lo=true;for(let j=i-radius;j<=i+radius;j++){if(j===i)continue;if(candles[j].high>=candles[i].high)hi=false;if(candles[j].low<=candles[i].low)lo=false;}
+        if(hi)highs.push({i,p:candles[i].high});if(lo)lows.push({i,p:candles[i].low});
     }
-    try{localStorage.setItem(ALERT_CROSS_KEY,JSON.stringify(Object.fromEntries(alertPreviousCross)));}catch{}
-    return signals;
+    return {highs,lows};
 }
-async function fetchAlertKlines(symbol,interval,limit){const url=new URL('https://api.binance.com/api/v3/klines');url.searchParams.set('symbol',symbol);url.searchParams.set('interval',interval);url.searchParams.set('limit',String(limit));const res=await fetch(url,{cache:'no-store'});if(!res.ok)throw new Error(`K 線讀取失敗 ${symbol} ${interval}`);return res.json();}
-function renderAlertHistory(rows, statusText) {
-    const list=document.getElementById('alerts-list'); if(!list)return;
-    const sorted=[...(rows||[])].sort((a,b)=>Number(b.timestamp||0)-Number(a.timestamp||0)).slice(0,150);
-    list.innerHTML=sorted.map(r=>`<article class="alert-row alert-row-high ${r.direction==='LONG'?'alert-long':'alert-short'}"><div class="alert-coin"><strong>${symbolLabel(r.symbol)} <span class="direction-pill ${r.direction==='LONG'?'signal-long':'signal-short'}">${r.direction==='LONG'?'做多':'做空'}</span></strong><small>${r.interval||r.intervalCode||'—'} · ${r.kind||'條件觸發'} · ${new Date(Number(r.timestamp||Date.now())).toLocaleString('zh-TW',{hour12:false})}</small></div><div class="alert-change ${r.direction==='LONG'?'market-up':'market-down'}">${formatPrice(r.symbol,r.price)}<small>USDT · ${r.relativeVolume==null?'定投跨零':`量能 ${Number(r.relativeVolume).toFixed(2)}×`}</small></div><div class="alert-reasons">${(r.reasons||[]).map(x=>`<span>${x}</span>`).join('')}</div></article>`).join('')||'<div class="muted">尚無觸發記錄。系統會持續掃描各週期；符合完整條件才新增告警。</div>';
-    const status=document.getElementById('alerts-status');if(status)status.textContent=statusText;
+function analyzeTimeframe(candles, symbol, interval) {
+    if(candles.length<210)throw new Error(`${ANALYSIS_INTERVAL_LABELS[interval]||interval} 僅取得 ${candles.length} 根已收盤 K 線，EMA200 等必要分析資料不足`);
+    const closes=candles.map(c=>c.close),volumes=candles.map(c=>c.volume),last=candles.length-1,c=candles[last],prev=candles[last-1];
+    const ema9=analysisEma(closes,9),ema21=analysisEma(closes,21),ema50=analysisEma(closes,50),ema200=analysisEma(closes,200),rsi=analysisRsi(closes),macd=analysisMacd(closes),atr=analysisAtr(candles);
+    if(!macd||!Number.isFinite(rsi[last])||![ema9[last],ema21[last],ema50[last],ema200[last],atr].every(Number.isFinite))throw new Error(`${ANALYSIS_INTERVAL_LABELS[interval]||interval} 指標資料不足`);
+    const avgVol=volumes.slice(-21,-1).reduce((a,b)=>a+b,0)/20,rvol=avgVol>0?c.volume/avgVol:null;
+    const obv=[0];for(let i=1;i<candles.length;i++)obv.push(obv[i-1]+(closes[i]>closes[i-1]?volumes[i]:closes[i]<closes[i-1]?-volumes[i]:0));
+    const vwapData=candles.slice(-20);let vwapNum=0,vwapDen=0;for(const x of vwapData){const typical=(x.high+x.low+x.close)/3;vwapNum+=typical*x.volume;vwapDen+=x.volume;}const vwap=vwapDen?vwapNum/vwapDen:null;
+    const piv=analysisPivots(candles.slice(-100),2),hs=piv.highs,ls=piv.lows,sh=hs.slice(-2),sl=ls.slice(-2);
+    const hh=sh.length===2&&sh[1].p>sh[0].p,lh=sh.length===2&&sh[1].p<sh[0].p,hl=sl.length===2&&sl[1].p>sl[0].p,ll=sl.length===2&&sl[1].p<sl[0].p;
+    const swingHigh=hs.length?hs[hs.length-1].p:null,swingLow=ls.length?ls[ls.length-1].p:null;
+    const priorHigh=Math.max(...candles.slice(-21,-1).map(x=>x.high)),priorLow=Math.min(...candles.slice(-21,-1).map(x=>x.low));
+    const sweepHigh=c.high>priorHigh&&c.close<priorHigh,sweepLow=c.low<priorLow&&c.close>priorLow;
+    const upBOS=swingHigh!=null&&c.close>swingHigh,downBOS=swingLow!=null&&c.close<swingLow;
+    const emaBull=ema9[last]>ema21[last]&&ema21[last]>ema50[last]&&ema50[last]>ema200[last],emaBear=ema9[last]<ema21[last]&&ema21[last]<ema50[last]&&ema50[last]<ema200[last];
+    const emaCrossUp=ema9[last]>ema21[last]&&ema9[last-1]<=ema21[last-1],emaCrossDown=ema9[last]<ema21[last]&&ema9[last-1]>=ema21[last-1];
+    const macdCrossUp=macd.line>macd.signal&&macd.prevLine<=macd.prevSignal,macdCrossDown=macd.line<macd.signal&&macd.prevLine>=macd.prevSignal;
+    const bullishCandle=c.close>c.open,bearishCandle=c.close<c.open;
+    const longScore=(emaBull?2:0)+(c.close>ema21[last]?1:0)+(macd.hist>0&&macd.hist>macd.prevHist?1:0)+(rsi[last]>50&&rsi[last]>=rsi[last-1]?1:0)+(upBOS||sweepLow?2:0)+(bullishCandle&&rvol>=1.2?1:0);
+    const shortScore=(emaBear?2:0)+(c.close<ema21[last]?1:0)+(macd.hist<0&&macd.hist<macd.prevHist?1:0)+(rsi[last]<50&&rsi[last]<=rsi[last-1]?1:0)+(downBOS||sweepHigh?2:0)+(bearishCandle&&rvol>=1.2?1:0);
+    const lastTwo=candles.slice(-2),twoLong=lastTwo.length===2&&lastTwo.every((x,i)=>x.close>x.open&&(i===0||x.close>lastTwo[i-1].close)),twoShort=lastTwo.length===2&&lastTwo.every((x,i)=>x.close<x.open&&(i===0||x.close<lastTwo[i-1].close));
+    const pattern=[];
+    // Price-action patterns are deliberately labelled potential unless a neckline/boundary is confirmed on close.
+    const recent=candles.slice(-40),localHighs=analysisPivots(recent,2).highs,localLows=analysisPivots(recent,2).lows;
+    if(localHighs.length>=2){const a=localHighs.at(-2).p,b=localHighs.at(-1).p;if(Math.abs(a-b)/Math.max(a,b)<.012)pattern.push({name:'潛在 M 型雙頂／等高壓力',status:c.close<Math.min(a,b)?'頸線/區間已跌破':'尚未確認',level:Math.min(a,b)});}
+    if(localLows.length>=2){const a=localLows.at(-2).p,b=localLows.at(-1).p;if(Math.abs(a-b)/Math.max(a,b)<.012)pattern.push({name:'潛在 W 型雙底／等低支撐',status:c.close>Math.max(a,b)?'區間已收復':'尚未確認',level:Math.max(a,b)});}
+    if(localHighs.length>=3){const p3=localHighs.slice(-3),[a,b,d]=p3.map(x=>x.p);if(Math.abs(a-d)/Math.max(a,d)<.035&&b>Math.max(a,d)*1.015)pattern.push({name:'潛在頭肩頂',status:c.close<Math.min(a,d)?'可能已跌破肩線區域':'尚未確認頸線突破',level:Math.min(a,d)});if([a,b,d].every(x=>Math.abs(x-((a+b+d)/3))/((a+b+d)/3)<.012))pattern.push({name:'潛在三重頂',status:c.close<Math.min(a,b,d)?'可能已跌破頂部支撐':'尚未確認',level:Math.min(a,b,d)});}
+    if(localLows.length>=3){const p3=localLows.slice(-3),[a,b,d]=p3.map(x=>x.p);if(Math.abs(a-d)/Math.max(a,d)<.035&&b<Math.min(a,d)*.985)pattern.push({name:'潛在頭肩底',status:c.close>Math.max(a,d)?'可能已收復肩線區域':'尚未確認頸線突破',level:Math.max(a,d)});if([a,b,d].every(x=>Math.abs(x-((a+b+d)/3))/((a+b+d)/3)<.012))pattern.push({name:'潛在三重底',status:c.close>Math.max(a,b,d)?'可能已收復底部壓力':'尚未確認',level:Math.max(a,b,d)});}
+    const lastFive=candles.slice(-5),oldMove=lastFive[2].close-lastFive[0].close,newMove=lastFive[4].close-lastFive[2].close;
+    if(oldMove<0&&newMove>0&&Math.abs(newMove)>Math.abs(oldMove)*.65)pattern.push({name:'潛在 V 型反轉',status:'短線反彈已出現，仍需結構與量能確認',level:Math.min(...lastFive.slice(0,3).map(x=>x.low))});
+    if(oldMove>0&&newMove<0&&Math.abs(newMove)>Math.abs(oldMove)*.65)pattern.push({name:'潛在尖頂／V 型回落',status:'短線回落已出現，仍需結構與量能確認',level:Math.max(...lastFive.slice(0,3).map(x=>x.high))});
+    if(localHighs.length>=3&&localLows.length>=3){const hh=localHighs.slice(-3).map(x=>x.p),ll=localLows.slice(-3).map(x=>x.p);if(hh[0]>hh[1]&&hh[1]>hh[2]&&ll[0]<ll[1]&&ll[1]<ll[2])pattern.push({name:'潛在對稱三角形',status:'收盤突破前仍屬整理形態',level:(hh[2]+ll[2])/2});else if(hh[0]>=hh[1]&&hh[1]>=hh[2]&&ll[0]<ll[1]&&ll[1]<ll[2])pattern.push({name:'潛在下降楔形／收斂',status:'尚待突破確認',level:ll[2]});else if(hh[0]<hh[1]&&hh[1]<hh[2]&&ll[0]<=ll[1]&&ll[1]<=ll[2])pattern.push({name:'潛在上升楔形／上行收斂',status:'尚待突破確認',level:hh[2]});}
+    const priorRange=recent.slice(0,-1),rangeHigh=Math.max(...priorRange.map(x=>x.high)),rangeLow=Math.min(...priorRange.map(x=>x.low)),rangePct=(rangeHigh-rangeLow)/Math.max(c.close,1e-12);
+    if(rangePct<.08)pattern.push({name:'潛在箱體盤整',status:c.close>rangeHigh?'向上突破':c.close<rangeLow?'向下跌破':'仍在區間內',level:c.close>rangeHigh?rangeHigh:rangeLow});
+    if(!pattern.length)pattern.push({name:upBOS?'向上結構突破':downBOS?'向下結構跌破':'尚無明確完整反轉形態',status:upBOS?'已收盤突破結構高點':downBOS?'已收盤跌破結構低點':'等待更多形態確認',level:upBOS?swingHigh:downBOS?swingLow:null});
+    const orderBlockBull=[...candles.slice(-30,-1)].reverse().find(x=>x.close<x.open&&c.close>x.high),orderBlockBear=[...candles.slice(-30,-1)].reverse().find(x=>x.close>x.open&&c.close<x.low);
+    const fvgBull=last>=2&&candles[last].low>candles[last-2].high?{low:candles[last-2].high,high:candles[last].low}:null;
+    const fvgBear=last>=2&&candles[last].high<candles[last-2].low?{low:candles[last].high,high:candles[last-2].low}:null;
+    const rangeMid=(rangeHigh+rangeLow)/2;
+    return {symbol,interval,candles,close:c.close,change:(c.close-prev.close)/prev.close*100,candleTime:c.closeTime,ema:{e9:ema9[last],e21:ema21[last],e50:ema50[last],e200:ema200[last],bull:emaBull,bear:emaBear,crossUp:emaCrossUp,crossDown:emaCrossDown},rsi:rsi[last],rsiPrev:rsi[last-1],macd,rvol,avgVol,volume:c.volume,atr,vwap,obv:obv.at(-1),obvPrev:obv.at(-6),hh,hl,lh,ll,swingHigh,swingLow,priorHigh,priorLow,sweepHigh,sweepLow,upBOS,downBOS,longScore,shortScore,twoLong,twoShort,bullishCandle,bearishCandle,patterns:pattern,orderBlockBull,orderBlockBear,fvgBull,fvgBear,rangeHigh,rangeLow,rangeMid,premium:c.close>rangeMid,emaCrossUp,emaCrossDown,macdCrossUp,macdCrossDown};
 }
-async function tryLoadServerAlerts(force=false) {
-    try {
-        if(force) await fetch('/api/scan',{method:'POST'}).catch(()=>null);
-        const res=await fetch('/api/alerts',{cache:'no-store'});if(!res.ok)return false;
-        const data=await res.json();if(!Array.isArray(data.alerts))return false;
-        alertsServerMode=true;
-        renderAlertHistory(data.alerts,`後端常駐監控 · 全部合格 USDT 現貨幣種（排除美元穩定幣） · ${data.lastScanCount||0} 種已掃描 · ${data.lastScanAt?'最近掃描 '+new Date(data.lastScanAt).toLocaleString('zh-TW',{hour12:false}):'首次掃描中'}${data.scanning?' · 掃描中':''}${data.lastScanErrors?` · ${data.lastScanErrors} 項資料錯誤`:''}${data.lastScanError?` · ${data.lastScanError}`:''}`);
-        alertsLastLoaded=Date.now();return true;
-    } catch { return false; }
+function tfTrend(t){if(t.ema.bull&&t.close>t.ema.e200)return '偏多';if(t.ema.bear&&t.close<t.ema.e200)return '偏空';if(t.close>t.ema.e50&&t.ema.e9>t.ema.e21)return '短線偏多';if(t.close<t.ema.e50&&t.ema.e9<t.ema.e21)return '短線偏空';return '盤整/分歧';}
+function analysisCard(title, lines, extra=''){return `<section class="analysis-card ${extra}"><h3>${title}</h3><ul>${lines.map(x=>`<li>${x}</li>`).join('')}</ul></section>`;}
+function checkRow(label,ok,detail=''){const cls=ok===true?'analysis-pass':ok===false?'analysis-fail':'analysis-unknown',mark=ok===true?'成立':ok===false?'不成立':'資料不足';return `<div class="analysis-check"><span>${label}${detail?`：${detail}`:''}</span><strong class="${cls}">${mark}</strong></div>`;}
+function renderAnalysis(symbol,primary,frames,rrMin,livePrice) {
+    const t=primary,allFrames=[frames['1d'],frames['4h'],frames['1h'],frames['15m']].filter(Boolean),trend=allFrames.map(tfTrend);
+    const longVotes=allFrames.filter(x=>tfTrend(x).includes('偏多')).length,shortVotes=allFrames.filter(x=>tfTrend(x).includes('偏空')).length;
+    const mtfLong=longVotes>=3,mtfShort=shortVotes>=3,mtfText=mtfLong?'多週期偏多':mtfShort?'多週期偏空':'週期分歧';
+    const longEvidence=[t.ema.bull||t.close>t.ema.e21,t.upBOS||t.sweepLow,t.rsi>50,t.macd.hist>0,t.rvol!=null&&t.rvol>=.8,t.twoLong];
+    const shortEvidence=[t.ema.bear||t.close<t.ema.e21,t.downBOS||t.sweepHigh,t.rsi<50,t.macd.hist<0,t.rvol!=null&&t.rvol>=.8,t.twoShort];
+    const longScore=t.longScore+(mtfLong?1:0),shortScore=t.shortScore+(mtfShort?1:0);
+    const longModulesReady=Number.isFinite(t.rsi)&&!!t.macd&&Number.isFinite(t.rvol)&&Number.isFinite(t.atr)&&Number.isFinite(t.ema.e200)&&t.patterns.length>0;
+    const shortModulesReady=longModulesReady;
+    const recent=t.candles.slice(-20),support=Math.min(...recent.map(x=>x.low)),resistance=Math.max(...recent.map(x=>x.high));
+    const direction=longModulesReady&&longScore>=6&&longScore>=shortScore+2&&t.twoLong&&mtfLong?'LONG':shortModulesReady&&shortScore>=6&&shortScore>=longScore+2&&t.twoShort&&mtfShort?'SHORT':'NONE';
+    let entryLow=null,entryHigh=null,stop=null,tp1=null,tp2=null,rr1=null,rr2=null,rrOk=false;
+    if(direction==='LONG'){entryLow=Math.min(t.close,t.ema.e21);entryHigh=Math.max(t.close,t.ema.e21);stop=Math.min(support,t.close-t.atr*1.5);const risk=entryHigh-stop;tp1=entryHigh+risk*rrMin;tp2=entryHigh+risk*Math.max(3,rrMin+1);rr1=(tp1-entryHigh)/risk;rr2=(tp2-entryHigh)/risk;rrOk=rr1>=rrMin&&tp1>resistance;}
+    if(direction==='SHORT'){entryLow=Math.min(t.close,t.ema.e21);entryHigh=Math.max(t.close,t.ema.e21);stop=Math.max(resistance,t.close+t.atr*1.5);const risk=stop-entryLow;tp1=entryLow-risk*rrMin;tp2=entryLow-risk*Math.max(3,rrMin+1);rr1=(entryLow-tp1)/risk;rr2=(entryLow-tp2)/risk;rrOk=rr1>=rrMin&&tp1<support;}
+    const finalDirection=direction!=='NONE'&&rrOk?'VALID': 'NONE';
+    const status=finalDirection==='VALID'?(direction==='LONG'?(longScore>=8?'強勢做多候選':'做多候選'):(shortScore>=8?'強勢做空候選':'做空候選')):'觀望';
+    const score=Math.max(longScore,shortScore),moduleNames=['形態學','SMC 結構','成交量','RSI','MACD','EMA'];
+    const patternLines=t.patterns.map(p=>`${analysisEscape(p.name)}；${analysisEscape(p.status)}${p.level!=null?`（關鍵位 ${analysisFormat(symbol,p.level)}）`:''}`);
+    const structureLines=[`市場結構：${t.hh?'HH':t.lh?'LH':'高點未確認'} / ${t.hl?'HL':t.ll?'LL':'低點未確認'}`,`BOS：${t.upBOS?'已向上突破':t.downBOS?'已向下跌破':'未確認'}`,`CHoCH / MSS：${t.sweepLow&&t.upBOS?'掃低後向上結構轉變':t.sweepHigh&&t.downBOS?'掃高後向下結構轉變':'尚無充分確認'}`,`Order Block：${t.orderBlockBull?`潛在多方 OB ${analysisFormat(symbol,t.orderBlockBull.low)}–${analysisFormat(symbol,t.orderBlockBull.high)}`:t.orderBlockBear?`潛在空方 OB ${analysisFormat(symbol,t.orderBlockBear.low)}–${analysisFormat(symbol,t.orderBlockBear.high)}`:'未辨識到收盤確認的 OB'}`,`FVG：${t.fvgBull?`潛在多方 ${analysisFormat(symbol,t.fvgBull.low)}–${analysisFormat(symbol,t.fvgBull.high)}`:t.fvgBear?`潛在空方 ${analysisFormat(symbol,t.fvgBear.low)}–${analysisFormat(symbol,t.fvgBear.high)}`:'最近 K 線未形成明確三 K 缺口'}`,`Liquidity Sweep：${t.sweepLow?'掃過前低後收回':t.sweepHigh?'掃過前高後收回':'未確認'}`,`Premium / Discount：${t.premium?'區間中位數上方（Premium）':'區間中位數下方（Discount）'}；中位 ${analysisFormat(symbol,t.rangeMid)}`,`Displacement：${Math.abs(t.change)>=1.5?'本根收盤變動顯著，需結合量能確認':'未見極端單根位移'}`];
+    const volLines=[`RVOL：${Number.isFinite(t.rvol)?t.rvol.toFixed(2)+'×':'資料不足'}（相對前 20 根已收盤 K 線均量）${t.rvol>=2?'；異常放量':t.rvol<.7?'；縮量':'；一般量能'}`,`量價：${t.change>=0?'收盤價漲':'收盤價跌'} ${analysisPct(t.change)}，本根成交量 ${!Number.isFinite(t.rvol)?'資料不足':t.rvol>=1.2?'高於近期均量':t.rvol<.8?'低於近期均量':'接近近期均量'}`,`突破量能：${(t.upBOS||t.downBOS)&&t.rvol<1?'突破/跌破缺乏量能支持':'未發現明顯量能反對證據'}`,`OBV：${t.obv>t.obvPrev?'最近約 5 根累積上升':t.obv<t.obvPrev?'最近約 5 根累積下降':'方向不明確'}`,`VWAP(近 20 根)：${t.vwap?`${analysisFormat(symbol,t.vwap)}；收盤${t.close>t.vwap?'在上方':'在下方'}`:'無法計算'}`];
+    const rsiLines=[`RSI(14)：${t.rsi.toFixed(1)}；${t.rsi>=70?'超買區':t.rsi<=30?'超賣區':t.rsi>50?'中軸上方偏強':'中軸下方偏弱'}`,`中軸：${t.rsi>50?'50 上方':t.rsi<50?'50 下方':'位於 50'}`,`RSI 方向：${t.rsi>t.rsiPrev?'上升':t.rsi<t.rsiPrev?'下降':'持平'}`,`頂/底背離：${detectRsiDivergence(t.candles)}`];
+    const macdLines=[`MACD：${t.macd.line>t.macd.signal?'MACD 線在訊號線上方':'MACD 線在訊號線下方'}`,`交叉：${t.macdCrossUp?'黃金交叉':t.macdCrossDown?'死亡交叉':'本根未出現新交叉'}`,`柱狀圖：${t.macd.hist>0?'正值': '負值'}；${Math.abs(t.macd.hist)>Math.abs(t.macd.prevHist)?'動能擴大':'動能收斂'}`,`零軸：${t.macd.line>0?'零軸上方':'零軸下方'}`,`頂/底背離：${detectMacdDivergence(t.candles)}`];
+    const emaLines=[`EMA 排列：${t.ema.bull?'9 > 21 > 50 > 200 多頭排列':t.ema.bear?'9 < 21 < 50 < 200 空頭排列':'均線未形成完整多空排列'}`,`EMA9/21：${t.ema.crossUp?'本根黃金交叉':t.ema.crossDown?'本根死亡交叉':t.ema.e9>t.ema.e21?'快線在上':'快線在下'}`,`現價相對均線：${t.close>t.ema.e9?'高於 EMA9':'低於 EMA9'}；${t.close>t.ema.e21?'高於 EMA21':'低於 EMA21'}；${t.close>t.ema.e50?'高於 EMA50':'低於 EMA50'}；${t.close>t.ema.e200?'高於 EMA200':'低於 EMA200'}`,`斜率：EMA9 ${t.ema.e9>t.ema.e21?'偏上':'偏弱'}；均線交叉須注意滯後與盤整噪音`];
+    const longChecks=[['支撐／折價／掃低區',t.close<=t.rangeMid||t.sweepLow,'價格位置'],['多頭結構證據',t.upBOS||t.sweepLow,'BOS／掃低'],['動能至少一項支持',t.rsi>50||t.macd.hist>0||t.ema.e9>t.ema.e21,'RSI／MACD／EMA'],['量價未明顯反對',t.rvol>=.8&&!(t.upBOS&&t.rvol<1),'RVOL 與突破量能'],['兩根不同收盤 K 線確認',t.twoLong,'連續兩根偏多收盤'],['風險報酬比符合',finalDirection==='VALID'&&direction==='LONG',`最低 1:${rrMin}`]];
+    const shortChecks=[['壓力／溢價／掃高區',t.close>=t.rangeMid||t.sweepHigh,'價格位置'],['空頭結構證據',t.downBOS||t.sweepHigh,'BOS／掃高'],['動能至少一項支持',t.rsi<50||t.macd.hist<0||t.ema.e9<t.ema.e21,'RSI／MACD／EMA'],['量價未明顯反對',t.rvol>=.8&&!(t.downBOS&&t.rvol<1),'RVOL 與跌破量能'],['兩根不同收盤 K 線確認',t.twoShort,'連續兩根偏空收盤'],['風險報酬比符合',finalDirection==='VALID'&&direction==='SHORT',`最低 1:${rrMin}`]];
+    const multiLines=ANALYSIS_INTERVALS.map(iv=>frames[iv]?`${ANALYSIS_INTERVAL_LABELS[iv]}：${tfTrend(frames[iv])}；收盤 ${analysisFormat(symbol,frames[iv].close)}`:`${ANALYSIS_INTERVAL_LABELS[iv]}：資料不足`);
+    const checksHtml=(arr)=>arr.map(x=>checkRow(x[0],x[1],x[2])).join('');
+    const statusClass=status.includes('做多')?'long':status.includes('做空')?'short':'neutral';
+    const time1=new Date(t.candles.at(-2).closeTime).toLocaleString('zh-TW',{hour12:false}),time2=new Date(t.candles.at(-1).closeTime).toLocaleString('zh-TW',{hour12:false});
+    const entryText=finalDirection==='VALID'?`${analysisFormat(symbol,entryLow)} – ${analysisFormat(symbol,entryHigh)}`:'不提供：必要條件、兩根收盤確認或風報比未全部成立';
+    const riskLines=[`停損參考：${finalDirection==='VALID'?analysisFormat(symbol,stop):'未提供'}`,`止盈目標：${finalDirection==='VALID'?`TP1 ${analysisFormat(symbol,tp1)}；TP2 ${analysisFormat(symbol,tp2)}`:'未提供'}`,`風險報酬比：${finalDirection==='VALID'?`TP1 約 1:${rr1.toFixed(2)}；TP2 約 1:${rr2.toFixed(2)}`:'不符合或無法計算'}`,`失效條件：${direction==='LONG'?`收盤跌破 ${analysisFormat(symbol,stop)} 或多頭結構失效`:direction==='SHORT'?`收盤突破 ${analysisFormat(symbol,stop)} 或空頭結構失效`:'等待有效方向後再定義結構失效點'}`,`最近支撐/壓力：${analysisFormat(symbol,support)} / ${analysisFormat(symbol,resistance)}`,`波動與假突破：ATR(14) ${analysisFormat(symbol,t.atr)}；${(!Number.isFinite(t.rvol)||t.rvol<1)?'量能偏弱/不足，假突破風險提高':'仍須觀察突破後回踩與收盤'}`];
+    const result=document.getElementById('analysis-result');
+    result.innerHTML=`<div class="analysis-summary"><div class="analysis-stat"><span>交易對 / 週期</span><strong>${analysisEscape(symbol)} · ${ANALYSIS_INTERVAL_LABELS[t.interval]}</strong></div><div class="analysis-stat"><span>已收盤 K 線價格</span><strong>${analysisFormat(symbol,t.close)}</strong><small>即時報價 ${analysisFormat(symbol,livePrice)}</small></div><div class="analysis-stat"><span>主要趨勢</span><strong>${trend[0]===trend[1]&&trend[1]===trend[2]?trend[0]:mtfText}</strong></div><div class="analysis-stat"><span>最終狀態</span><strong><span class="analysis-badge ${statusClass}">${status}</span></strong><small>多 ${longScore} 分 / 空 ${shortScore} 分（加權評分）</small></div></div>
+    <div class="analysis-grid">${analysisCard('形態學',patternLines.concat([`區間支撐/壓力：${analysisFormat(symbol,t.rangeLow)} / ${analysisFormat(symbol,t.rangeHigh)}`,`形態失效：若收盤重新進入突破區或跌破/突破關鍵位，原判讀失效`]))}${analysisCard('SMC 智慧資金結構',structureLines)}${analysisCard('成交量與量價關係',volLines)}${analysisCard('RSI',rsiLines)}${analysisCard('MACD',macdLines)}${analysisCard('EMA 均線',emaLines)}${analysisCard('多週期一致性',multiLines.concat([`一致性結論：${mtfText}（不將不同週期當作同一確認條件）`]))}<section class="analysis-card"><h3>多頭條件檢查</h3>${checksHtml(longChecks)}</section><section class="analysis-card"><h3>空頭條件檢查</h3>${checksHtml(shortChecks)}</section><section class="analysis-card"><h3>訊號確認</h3><ul><li>第一根已收盤 K 線：${time1}（${t.candles.at(-2).close>t.candles.at(-2).open?'收漲':'收跌/平盤'}）</li><li>第二根已收盤 K 線：${time2}（${t.candles.at(-1).close>t.candles.at(-1).open?'收漲':'收跌/平盤'}）</li><li>連續兩根多頭確認：${t.twoLong?'成立':'不成立'}；空頭確認：${t.twoShort?'成立':'不成立'}</li><li>分析時間：${new Date().toLocaleString('zh-TW',{hour12:false})}</li></ul></section><section class="analysis-card"><h3>進場參考</h3><p>${entryText}</p><p class="analysis-muted">${finalDirection==='VALID'?'只作計畫參考；不得將分析訊號視為必須成交。':'目前不符合進場條件，建議觀望，不追價。'}</p></section><section class="analysis-card analysis-risk"><h3>風險管理</h3><ul>${riskLines.map(x=>`<li>${x}</li>`).join('')}</ul></section></div><p class="analysis-disclaimer">此分析屬於技術面情境評估，不保證行情走勢或獲利。SMC 訂單區塊、FVG、流動性與形態皆由 OHLCV 近似推估，並非交易所完整訂單流。請自行評估倉位、手續費、滑點與清算風險。</p>`;
 }
-async function notifyAlert(signal) {
-    if(localStorage.getItem('cpc_alert_notifications')!=='on'||!('Notification'in window)||Notification.permission!=='granted')return;
-    let sent=[];try{sent=JSON.parse(localStorage.getItem(ALERT_NOTIFIED_KEY)||'[]');}catch{}
-    const id=signal.id||signal.key;if(sent.includes(id))return;
-    try { const body=`${signal.kind||'多空訊號'} · 現價 ${formatPrice(signal.symbol,signal.price)} USDT · ${(signal.reasons||[]).slice(0,2).join('；')}`;if('serviceWorker'in navigator){const reg=await navigator.serviceWorker.ready;await reg.showNotification(`${signal.direction==='LONG'?'🟢 做多':'🔴 做空'}｜${symbolLabel(signal.symbol)} ${signal.interval||''}`,{body,icon:'./icon-192.png',tag:id,renotify:false,data:{url:'./'}});}else new Notification(`${signal.direction==='LONG'?'做多':'做空'}｜${symbolLabel(signal.symbol)}`,{body});sent.unshift(id);localStorage.setItem(ALERT_NOTIFIED_KEY,JSON.stringify(sent.slice(0,500)));}catch(e){console.warn('通知發送失敗',e);}
+function detectRsiDivergence(candles){if(candles.length<50)return '資料不足';const a=candles.slice(-50),p=analysisPivots(a,2),highs=p.highs.slice(-2),lows=p.lows.slice(-2),r=analysisRsi(a.map(x=>x.close));if(highs.length===2&&highs[1].p>highs[0].p&&r[highs[1].i]<r[highs[0].i])return '一般頂背離（動能減弱，非立即反轉保證）';if(lows.length===2&&lows[1].p<lows[0].p&&r[lows[1].i]>r[lows[0].i])return '一般底背離（動能減弱，非立即反轉保證）';if(highs.length===2&&highs[1].p<highs[0].p&&r[highs[1].i]>r[highs[0].i])return '潛在隱藏頂背離';if(lows.length===2&&lows[1].p>lows[0].p&&r[lows[1].i]<r[lows[0].i])return '潛在隱藏底背離';return '未辨識到清晰背離';}
+function detectMacdDivergence(candles){if(candles.length<60)return '資料不足';const a=candles.slice(-60),closes=a.map(x=>x.close),m=analysisMacd(closes),p=analysisPivots(a,2);if(!m)return '資料不足';const highs=p.highs.slice(-2),lows=p.lows.slice(-2);if(highs.length===2&&highs[1].p>highs[0].p)return '需進一步比對 MACD 擺動高點；價格高點走高';if(lows.length===2&&lows[1].p<lows[0].p)return '需進一步比對 MACD 擺動低點；價格低點走低';return '未辨識到清晰背離';}
+async function runTechnicalAnalysis(){
+    const status=document.getElementById('analysis-status'),result=document.getElementById('analysis-result');if(!status||!result)return;
+    if(analysisRunButton)analysisRunButton.disabled=true;
+    try{
+        const raw=document.getElementById('analysis-symbol').value||'BTCUSDT';const symbol=normalizeBinanceSymbol(raw);
+        if(!symbol||!symbol.endsWith('USDT')||isExcludedStableSymbol(symbol))throw new Error('請輸入有效的 Binance USDT 現貨交易對，例如 BTCUSDT。');
+        const interval=document.getElementById('analysis-interval').value,rrMin=Number(document.getElementById('analysis-min-rr').value)||2;
+        status.textContent=`正在取得 ${symbol} 的已收盤 K 線與多週期數據…`;
+        const intervals=[...new Set([...ANALYSIS_INTERVALS,interval])];
+        const results=await Promise.all(intervals.map(async iv=>[iv,await fetchAnalysisCandles(symbol,iv,260)]));const rawFrames=Object.fromEntries(results);
+        const frames={};for(const iv of intervals)frames[iv]=analyzeTimeframe(rawFrames[iv],symbol,iv);
+        const primary=frames[interval];
+        // Latest ticker is displayed as context only; signal confirmation always uses closed candles.
+        let livePrice=primary.close;try{const r=await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${encodeURIComponent(symbol)}`,{cache:'no-store'});if(r.ok){const j=await r.json();if(Number.isFinite(+j.price))livePrice=+j.price;}}catch{}
+        renderAnalysis(symbol,primary,frames,rrMin,livePrice);
+        status.textContent=`完成：${symbol} · ${ANALYSIS_INTERVAL_LABELS[interval]} · 已排除未收盤 K 線 · ${new Date().toLocaleString('zh-TW',{hour12:false})}`;
+    }catch(e){status.textContent=`分析中止：${e.message||'未知錯誤'}`;result.innerHTML=`<div class="alert-empty"><strong>資料不足，觀望</strong><span>${analysisEscape(e.message||'無法完成分析')}。系統不會虛構訊號或進場價格，請確認交易對、網路與 Binance API 可用性後重試。</span></div>`;}
+    finally{if(analysisRunButton)analysisRunButton.disabled=false;}
 }
-async function loadMarketAlerts(force=false) {
-    const list=document.getElementById('alerts-list'),status=document.getElementById('alerts-status');
-    if(!list||alertsScanInProgress||(!force&&Date.now()-alertsLastLoaded<50000))return;
-    alertsScanInProgress=true;
-    try {
-        if(await tryLoadServerAlerts(force))return;
-        alertsServerMode=false;
-        status.textContent='正在掃描 Binance 全部合格 USDT 現貨幣種的多空指標…';
-        const [exchangeRes,tickerRes]=await Promise.all([fetch('https://api.binance.com/api/v3/exchangeInfo',{cache:'no-store'}),fetch('https://api.binance.com/api/v3/ticker/24hr',{cache:'no-store'})]);
-        if(!exchangeRes.ok||!tickerRes.ok)throw new Error('Binance 市場資料暫時不可用');
-        const exchange=await exchangeRes.json(),tickers=await tickerRes.json();
-        const allowed=new Set((exchange.symbols||[]).filter(x=>x.status==='TRADING'&&x.quoteAsset==='USDT'&&x.isSpotTradingAllowed!==false&&!isExcludedStableSymbol(`${x.baseAsset}USDT`)).map(x=>x.symbol));
-        const tickerMap=new Map(tickers.filter(t=>allowed.has(t.symbol)&&Number(t.lastPrice)>0).map(t=>[t.symbol,t]));
-        const custom=(marketCustomSymbols||[]).filter(s=>allowed.has(s));
-        const selected=[...new Set([...tickerMap.keys(),...custom])].map(s=>tickerMap.get(s)).filter(Boolean).sort((a,b)=>Number(b.quoteVolume)-Number(a.quoteVolume));
-        let checked=0;const fresh=[];
-        for(let i=0;i<selected.length;i+=8){
-            const batch=await Promise.all(selected.slice(i,i+8).map(async ticker=>{const out=[];try{let daily=alertDailyCache.get(ticker.symbol);if(!daily||Date.now()-daily.at>6*3600000){daily={candles:await fetchAlertKlines(ticker.symbol,'1d',1000),at:Date.now()};alertDailyCache.set(ticker.symbol,daily);}out.push(...detectDcaCross(ticker.symbol,Number(ticker.lastPrice),daily.candles));}catch{}
-                for(const interval of ALERT_INTERVALS){try{const candles=await fetchAlertKlines(ticker.symbol,interval,100);const signal=analyzeTechnical(ticker.symbol,ticker,candles,interval);if(signal)out.push(signal);}catch{}}
-                return out;}));
-            for(const signal of batch.flat())if(rememberAlert(signal))fresh.push(signal);checked+=batch.length;
-            status.textContent=`全市場掃描進度 ${checked}/${selected.length} 個交易對…`;
-        }
-        for(const signal of fresh)await notifyAlert(signal);
-        renderAlertHistory(alertHistory,`瀏覽器執行中掃描 · ${selected.length} 個合格 USDT 現貨對 · 保留 ${alertHistory.length} 筆歷史警示 · 每分鐘重查（關閉頁面後請部署後端推播） · ${formatUpdatedTime()}`);
-        alertsLastLoaded=Date.now();
-    }catch(error){status.textContent=`警示載入失敗：${error.message||'請稍後重試'}`;if(!alertHistory.length)list.innerHTML='<div class="error-text">無法取得 Binance 警示資料，請檢查網路或部署後端。</div>';else renderAlertHistory(alertHistory,`目前無法更新市場資料，已保留 ${alertHistory.length} 筆歷史警示：${error.message||'連線失敗'}`);}
-    finally{alertsScanInProgress=false;}
-}
-document.getElementById('alerts-refresh-btn')?.addEventListener('click',()=>loadMarketAlerts(true));
-document.getElementById('alerts-notify-btn')?.addEventListener('click',async()=>{
-    const status=document.getElementById('alerts-status');
-    if(!('Notification'in window)){status.textContent='此瀏覽器不支援通知。';return;}
-    const permission=Notification.permission==='granted'?'granted':await Notification.requestPermission();
-    if(permission!=='granted'){localStorage.setItem('cpc_alert_notifications','off');status.textContent='通知權限未開啟，請到瀏覽器網站設定允許通知。';return;}
-    localStorage.setItem('cpc_alert_notifications','on');
-    try {
-        const keyRes=await fetch('/api/push/public-key',{cache:'no-store'});if(!keyRes.ok)throw new Error('後端尚未部署');const {publicKey}=await keyRes.json();
-        const reg=await navigator.serviceWorker.ready;let subscription=await reg.pushManager.getSubscription();
-        if(!subscription)subscription=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:(()=>{const raw=publicKey.replace(/-/g,'+').replace(/_/g,'/');const padded=raw+'='.repeat((4-raw.length%4)%4);return Uint8Array.from(atob(padded),c=>c.charCodeAt(0));})()});
-        const saveRes=await fetch('/api/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(subscription)});if(!saveRes.ok)throw new Error('推播訂閱未能保存');
-        status.textContent='手機推播已綁定後端。伺服器會每分鐘掃描並保存歷史警示；即使關閉 App，也會在新訊號觸發時推播（需 HTTPS 與後端持續運作）。';
-    }catch(e){status.textContent=`本頁通知已開啟，但未連上後端推播（${e.message}）。要關閉 App 仍通知，請依 DEPLOY.md 部署 HTTPS 後端。`;
-        if(!alertsServerMode)loadMarketAlerts(true);
-    }
-    loadMarketAlerts(true);
-});
-setInterval(()=>{if(localStorage.getItem('cpc_alert_notifications')==='on'||document.querySelector('[data-feature-tab="alerts"]')?.classList.contains('active'))loadMarketAlerts(true);},60000);
-// Immediately load saved history; the server performs background scans independently when deployed.
-loadMarketAlerts(true);
+analysisRunButton?.addEventListener('click',runTechnicalAnalysis);
+document.getElementById('analysis-symbol')?.addEventListener('keydown',e=>{if(e.key==='Enter')runTechnicalAnalysis();});
+// Deliberately do not run scans or push notifications automatically: this is an on-demand analysis engine.

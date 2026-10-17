@@ -9,6 +9,8 @@ const DATA_DIR = path.join(ROOT, 'data');
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
 const PORT = Number(process.env.PORT || 8080);
 const SCAN_INTERVAL_MS = Math.max(60_000, Number(process.env.SCAN_INTERVAL_MS || 60_000));
+const ALERT_UNIVERSE_LIMIT = Math.max(10, Math.min(100, Number(process.env.ALERT_UNIVERSE_LIMIT || 40)));
+const INTERVAL_MS = { '15m': 15 * 60_000, '1h': 60 * 60_000, '4h': 4 * 60 * 60_000 };
 const MIN_QUOTE_VOLUME = Math.max(0, Number(process.env.MIN_QUOTE_VOLUME || 0));
 const STABLE_BASES = new Set((process.env.EXCLUDED_STABLE_BASES || 'USDT,USDC,BUSD,FDUSD,TUSD,USDP,DAI,USDE,USDS,USD1,UST,USTC,FRAX,LUSD,USDD,EURC,AEUR,EURI').split(',').map(x => x.trim().toUpperCase()).filter(Boolean));
 const LEVERAGED = /(UP|DOWN|BULL|BEAR)USDT$/;
@@ -16,7 +18,7 @@ const INTERVALS = ['15m', '1h', '4h'];
 const FREQUENCIES = ['daily', 'weekly', 'monthly'];
 const INTERVAL_LABEL = { '15m': '15 分鐘', '1h': '1 小時', '4h': '4 小時', daily: '每日定投', weekly: '每週定投', monthly: '每月定投' };
 const HISTORY_LIMIT = 500;
-let state = { alerts: [], subscriptions: [], technicalState: {}, dcaCrossState: {}, dailyCache: {}, lastScanAt: null, lastScanError: null };
+let state = { alerts: [], subscriptions: [], technicalState: {}, technicalCandidates: {}, lastTechnicalBucket: {}, lastScanAt: null, lastScanError: null };
 let exchangeSymbolsCache = { at: 0, symbols: [] };
 let scanning = false;
 
@@ -49,7 +51,7 @@ function technicalSignal(symbol, ticker, candles, interval) {
   if (closes.length < 55) return null;
   const e9 = ema(closes, 9), e21 = ema(closes, 21), hist = macdHist(closes), rs = rsi(closes, 14);
   const i = closes.length - 1, h = hist[i], hp = hist[i - 1], hpp = hist[i - 2], rvBase = volumes.slice(-21, -1).reduce((a, b) => a + b, 0) / Math.max(1, volumes.slice(-21, -1).length);
-  const current = candles[candles.length - 1], currentVol = Number(current[7]), relativeVolume = rvBase > 0 ? currentVol / rvBase : 0;
+  const current = closed[closed.length - 1], currentVol = Number(current[7]), relativeVolume = rvBase > 0 ? currentVol / rvBase : 0;
   const price = Number(ticker.lastPrice), r = Number(rs.at(-1)), rp = Number(rs.at(-2));
   const tr = closed.slice(-14).map((c, j, arr) => { const high = Number(c[2]), low = Number(c[3]), prev = j ? Number(arr[j - 1][4]) : Number(closed[Math.max(0, closed.length - 15)][4]); return Math.max(high - low, Math.abs(high - prev), Math.abs(low - prev)); });
   const atr = tr.reduce((a, b) => a + b, 0) / tr.length;
@@ -64,8 +66,10 @@ function technicalSignal(symbol, ticker, candles, interval) {
   const longScore = (longEma ? 1 : 0) + (aboveEma ? 1 : 0) + (macdLongStrong ? 2 : macdLongEarly ? 1 : 0) + (rsiLong ? 1 : 0) + (volumeBoost && green ? 1 : 0);
   const shortScore = (shortEma ? 1 : 0) + (belowEma ? 1 : 0) + (macdShortStrong ? 2 : macdShortEarly ? 1 : 0) + (rsiShort ? 1 : 0) + (volumeBoost && red ? 1 : 0);
   let direction = null, score = 0;
-  if (longScore >= 5 && longScore >= shortScore + 2 && (longEma || macdLongStrong || macdLongEarly)) { direction = 'LONG'; score = longScore; }
-  else if (shortScore >= 5 && shortScore >= longScore + 2 && (shortEma || macdShortStrong || macdShortEarly)) { direction = 'SHORT'; score = shortScore; }
+  // Strict mode: every major component must agree; early/crossing MACD signals alone are not enough.
+  // Reject unusually large signal candles to avoid chasing a move after it has already extended.
+  if (longScore === 6 && longScore >= shortScore + 3 && relativeVolume >= 1.8 && r >= 48 && r <= 64 && r >= rp && longEma && aboveEma && macdLongStrong && move >= 0 && move <= 2.5) { direction = 'LONG'; score = longScore; }
+  else if (shortScore === 6 && shortScore >= longScore + 3 && relativeVolume >= 1.8 && r >= 36 && r <= 52 && r <= rp && shortEma && belowEma && macdShortStrong && move <= 0 && move >= -2.5) { direction = 'SHORT'; score = shortScore; }
   if (!direction) return null;
   const candleCloseTime = Number(current[6]);
   const key = `TECH:${symbol}:${interval}:${direction}:${candleCloseTime}`;
@@ -76,14 +80,14 @@ function technicalSignal(symbol, ticker, candles, interval) {
     `相對成交量 ${relativeVolume.toFixed(2)}×（相對前 20 根已收盤 K 線平均）`,
     `ATR(14) 約 ${atr.toPrecision(6)} USDT（最近 14 根已收盤 K 線平均真實波動）`,
     `當根 K 線變化 ${move >= 0 ? '+' : ''}${move.toFixed(2)}%`,
-    `綜合判斷：${direction === 'LONG' ? '趨勢/動能偏多且至少 5 分' : '趨勢/動能偏空且至少 5 分'}；${r < 30 && direction === 'SHORT' ? 'RSI 超賣，追空風險偏高' : r > 70 && direction === 'LONG' ? 'RSI 超買，追多風險偏高' : '條件一致度達門檻'}`
+    `綜合判斷：趨勢、MACD、RSI、量能與 K 線方向全部一致（${score}/6）；已排除早期交叉訊號與單根過度延伸行情` 
   ];
   return { id: key, key, symbol, price, change: Number(ticker.priceChangePercent), interval: INTERVAL_LABEL[interval], intervalCode: interval, direction, score, relativeVolume, rsi: r, atr, kind: `多空共振（${score}/6）`, reasons, timestamp: Date.now(), candleCloseTime };
 }
 async function getKlines(symbol, interval, limit) { const u = new URL('https://api.binance.com/api/v3/klines'); u.searchParams.set('symbol', symbol); u.searchParams.set('interval', interval); u.searchParams.set('limit', String(limit)); return binance(u.toString()); }
 async function mapLimit(items, limit, fn) { let next = 0; const workers = Array.from({ length: Math.min(limit, items.length) }, async () => { while (next < items.length) { const i = next++; try { await fn(items[i], i); } catch (e) { /* per-item errors are counted by caller */ } } }); await Promise.all(workers); }
 async function pushToSubscribers(alert) {
-  const payload = JSON.stringify({ title: `${alert.direction === 'LONG' ? '🟢 做多' : '🔴 做空'}｜${symbolLabel(alert.symbol)} ${alert.interval}`, body: `${alert.kind} · 現價 ${alert.price} USDT\n${(alert.reasons || []).slice(0, 3).join('；')}`, tag: alert.id, url: '/' });
+  const payload = JSON.stringify({ title: `${alert.direction === 'LONG' ? '🟢 做多' : '🔴 做空'}｜${symbolLabel(alert.symbol)} ${alert.interval}`, body: `${alert.kind} · 現價 ${alert.price}\n${(alert.reasons || []).slice(0, 3).join('；')}`, tag: alert.id, url: '/' });
   const expired = new Set();
   await Promise.all((state.subscriptions || []).map(async sub => { try { await webpush.sendNotification(sub, payload, { TTL: 3600 }); } catch (e) { if (e.statusCode === 404 || e.statusCode === 410) expired.add(sub.endpoint); else console.warn('Push failed:', e.statusCode || e.message); } }));
   if (expired.size) { state.subscriptions = state.subscriptions.filter(s => !expired.has(s.endpoint)); saveState(); }
@@ -94,44 +98,40 @@ async function scanMarket() {
   try {
     const [symbols, tickerRows] = await Promise.all([getSymbols(), binance('https://api.binance.com/api/v3/ticker/24hr')]);
     const tickerMap = new Map(tickerRows.filter(t => Number(t.lastPrice) > 0 && Number(t.quoteVolume) >= MIN_QUOTE_VOLUME).map(t => [t.symbol, t]));
-    const universe = symbols.filter(s => tickerMap.has(s)); const newAlerts = [];
-    await mapLimit(universe, Number(process.env.SCAN_CONCURRENCY || 16), async symbol => {
+    const universe = symbols.filter(s => tickerMap.has(s)).sort((a, b) => Number(tickerMap.get(b).quoteVolume) - Number(tickerMap.get(a).quoteVolume)).slice(0, ALERT_UNIVERSE_LIMIT); const newAlerts = [];
+    const now = Date.now();
+    await mapLimit(universe, Number(process.env.SCAN_CONCURRENCY || 8), async symbol => {
       const ticker = tickerMap.get(symbol); if (!ticker) return;
       const found = [];
       for (const interval of INTERVALS) {
+        const stateKey = `${symbol}:${interval}`;
+        const bucket = Math.floor(now / INTERVAL_MS[interval]);
+        if (Number(state.lastTechnicalBucket[stateKey]) === bucket) continue;
         try {
           const candles = await getKlines(symbol, interval, 100);
           const signal = technicalSignal(symbol, ticker, candles, interval);
-          const stateKey = `${symbol}:${interval}`;
-          const prevDirection = state.technicalState[stateKey] || 'NONE';
-          if (signal && prevDirection !== signal.direction) addAlert(signal, newAlerts);
-          state.technicalState[stateKey] = signal ? signal.direction : 'NONE';
+          const candidate = state.technicalCandidates[stateKey];
+          if (signal) {
+            const duration = INTERVAL_MS[interval];
+            const consecutive = candidate && candidate.direction === signal.direction && Number(signal.candleCloseTime) > Number(candidate.candleCloseTime) && Number(signal.candleCloseTime) - Number(candidate.candleCloseTime) <= duration * 1.5;
+            if (consecutive && state.technicalState[stateKey] !== signal.direction) {
+              signal.reasons = [...signal.reasons, `確認機制：連續兩根已收盤 ${INTERVAL_LABEL[interval]} K 線全部嚴格條件同向成立`];
+              addAlert(signal, newAlerts);
+              state.technicalState[stateKey] = signal.direction;
+            }
+            state.technicalCandidates[stateKey] = { direction: signal.direction, candleCloseTime: signal.candleCloseTime };
+          } else {
+            state.technicalCandidates[stateKey] = null;
+            state.technicalState[stateKey] = 'NONE';
+          }
+          state.lastTechnicalBucket[stateKey] = bucket;
         } catch (e) { errors++; }
       }
-      try {
-        const cache = state.dailyCache[symbol]; let averages;
-        if (cache && Date.now() - cache.at < 6 * 3600_000 && cache.averages) averages = cache.averages;
-        else {
-          const daily = await getKlines(symbol, '1d', 499);
-          averages = Object.fromEntries(FREQUENCIES.map(frequency => [frequency, avgDca(daily, frequency)]));
-          state.dailyCache[symbol] = { at: Date.now(), averages };
-        }
-        for (const frequency of FREQUENCIES) {
-          const avg = averages[frequency]; if (!(avg > 0)) continue;
-          const price = Number(ticker.lastPrice), pct = (price - avg) / avg * 100, sign = pct >= 0 ? 'POS' : 'NEG', crossKey = `${symbol}:${frequency}`, previous = state.dcaCrossState[crossKey];
-          state.dcaCrossState[crossKey] = sign;
-          if (previous && previous !== sign) {
-            const direction = previous === 'NEG' ? 'LONG' : 'SHORT';
-            const id = `DCA:${symbol}:${frequency}:${direction}:${new Date().toISOString().slice(0, 16)}`;
-            addAlert({ id, key: id, symbol, price, direction, interval: INTERVAL_LABEL[frequency], kind: `${INTERVAL_LABEL[frequency]}均價跨零`, score: 1, dcaAvg: avg, dcaPct: pct, reasons: [`定投均價 ${avg}`, `現價與均價差 ${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`, previous === 'NEG' ? '差值由負轉正：偏多提示' : '差值由正轉負：偏空提示'], timestamp: Date.now() }, newAlerts);
-          }
-        }
-      } catch (e) { errors++; }
       checked++;
     });
     state.lastScanAt = new Date().toISOString(); state.lastScanError = null; state.lastScanCount = checked; state.lastScanErrors = errors; saveState();
     for (const alert of newAlerts) await pushToSubscribers(alert);
-    console.log(`[scan] ${checked}/${universe.length} pairs; ${newAlerts.length} new alerts; ${errors} errors; ${Math.round((Date.now()-started)/1000)}s`);
+    console.log(`[scan] ${checked}/${universe.length} high-volume pairs; ${newAlerts.length} new alerts; ${errors} errors; ${Math.round((Date.now()-started)/1000)}s`);
   } catch (e) { state.lastScanError = e.message; saveState(); console.error('[scan] failed:', e.message); }
   finally { scanning = false; }
 }
@@ -149,13 +149,13 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') return json(res, 204, {});
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   try {
-    if (url.pathname === '/api/health' && req.method === 'GET') return json(res, 200, { ok: true, scanning, lastScanAt: state.lastScanAt, lastScanError: state.lastScanError, lastScanCount: state.lastScanCount || 0, lastScanErrors: state.lastScanErrors || 0, subscriptionCount: state.subscriptions.length });
-    if (url.pathname === '/api/alerts' && req.method === 'GET') return json(res, 200, { alerts: state.alerts, lastScanAt: state.lastScanAt, lastScanError: state.lastScanError, lastScanCount: state.lastScanCount || 0, lastScanErrors: state.lastScanErrors || 0, scanning });
+    if (url.pathname === '/api/health' && req.method === 'GET') return json(res, 200, { ok: true, scanning, lastScanAt: state.lastScanAt, lastScanError: state.lastScanError, lastScanCount: state.lastScanCount || 0, lastScanErrors: state.lastScanErrors || 0, subscriptionCount: state.subscriptions.length, monitoredPairs: ALERT_UNIVERSE_LIMIT, scanIntervalMs: SCAN_INTERVAL_MS });
+    if (url.pathname === '/api/alerts' && req.method === 'GET') return json(res, 200, { alerts: state.alerts, lastScanAt: state.lastScanAt, lastScanError: state.lastScanError, lastScanCount: state.lastScanCount || 0, lastScanErrors: state.lastScanErrors || 0, scanning, monitoredPairs: ALERT_UNIVERSE_LIMIT, scanIntervalMs: SCAN_INTERVAL_MS });
     if (url.pathname === '/api/push/public-key' && req.method === 'GET') return json(res, 200, { publicKey: vapidKeys.publicKey });
     if (url.pathname === '/api/push/subscribe' && req.method === 'POST') { const sub = await readBody(req); if (!sub.endpoint || !sub.keys?.p256dh || !sub.keys?.auth) return json(res, 400, { error: 'Invalid subscription' }); state.subscriptions = state.subscriptions.filter(s => s.endpoint !== sub.endpoint); state.subscriptions.push(sub); saveState(); return json(res, 201, { ok: true, subscriptionCount: state.subscriptions.length }); }
     if (url.pathname === '/api/push/subscribe' && req.method === 'DELETE') { const body = await readBody(req); state.subscriptions = state.subscriptions.filter(s => s.endpoint !== body.endpoint); saveState(); return json(res, 200, { ok: true }); }
-    if (url.pathname === '/api/scan' && req.method === 'POST') { if (scanning) return json(res, 202, { ok: true, scanning: true }); scanMarket(); return json(res, 202, { ok: true, scanning: true }); }
+    if (url.pathname === '/api/scan' && req.method === 'POST') return json(res, 410, { ok: false, disabled: true, message: '舊版異常警示掃描已停用；請使用前端多空分析引擎。' });
     return serveStatic(req, res);
   } catch (e) { return json(res, 400, { error: e.message || 'Request failed' }); }
 });
-server.listen(PORT, () => { console.log(`Crypto Price Checker listening on ${PORT}`); scanMarket(); setInterval(scanMarket, SCAN_INTERVAL_MS); });
+server.listen(PORT, () => { console.log(`Crypto Price Checker listening on ${PORT}; legacy background alert scanning is disabled.`); });

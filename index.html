@@ -8,7 +8,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Crypto Price Checker">
     <meta name="mobile-web-app-capable" content="yes">
-    <meta name="description" content="Crypto Price Checker — Binance 即時幣價與 K 棒漲跌幅查詢">
+    <meta name="description" content="Crypto Price Checker — Binance 即時報價與多週期加密貨幣技術分析">
     <link rel="manifest" href="./manifest.webmanifest">
     <link rel="icon" href="./icon.png" type="image/png">
     <link rel="apple-touch-icon" href="./icon-192.png">
@@ -37,7 +37,7 @@
         </header>
 
         <nav class="feature-tabs" role="tablist" aria-label="功能切換">
-            <button type="button" class="feature-tab active" data-feature-tab="alerts" role="tab" aria-selected="true">異常警示</button>
+            <button type="button" class="feature-tab active" data-feature-tab="alerts" role="tab" aria-selected="true">多空分析引擎</button>
             <button type="button" class="feature-tab" data-feature-tab="live" role="tab" aria-selected="false">即時報價</button>
             <button type="button" class="feature-tab" data-feature-tab="market" role="tab" aria-selected="false">市場總覽</button>
             <button type="button" class="feature-tab" data-feature-tab="dca" role="tab" aria-selected="false">定投報酬</button>
@@ -49,31 +49,21 @@
             <span id="app-status-text">準備載入…</span>
         </div>
 
-        <section class="card feature-panel alerts-panel" data-feature-panel="alerts" role="tabpanel" aria-label="異常警示">
-            <div class="section-heading">
-                <div><h2 class="section-title">多空訊號警示</h2><p class="section-hint">後端部署後每分鐘掃描全部合格 Binance USDT 現貨幣種；15 分鐘、1 小時、4 小時任一週期達條件就獨立觸發。警示會保留歷史，不因刷新消失；USD 穩定幣及槓桿代幣排除。</p></div>
-                <button type="button" id="alerts-refresh-btn" class="market-refresh-btn">更新警示</button>
+        <section class="card feature-panel alerts-panel analysis-engine-panel" data-feature-panel="alerts" role="tabpanel" aria-label="加密貨幣多空訊號綜合分析引擎">
+            <div class="section-heading"><div><h2 class="section-title">加密貨幣多空訊號綜合分析引擎</h2><p class="section-hint">以 Binance 已收盤 K 線為基礎，綜合形態學、SMC、成交量、RSI、MACD、EMA 與多週期方向。資料不足或必要條件未成立時，一律觀望。</p></div><button type="button" id="analysis-run-btn" class="market-refresh-btn">開始分析</button></div>
+            <div class="analysis-controls">
+                <div class="analysis-field"><label for="analysis-symbol">交易對</label><input id="analysis-symbol" value="BTCUSDT" placeholder="BTCUSDT 或 BTC/USDT" autocomplete="off"><small>Binance USDT 現貨，例如 BTCUSDT、ETHUSDT、SOLUSDT</small></div>
+                <div class="analysis-field"><label for="analysis-interval">主要分析週期</label><select id="analysis-interval"><option value="15m">15 分鐘</option><option value="1h" selected>1 小時</option><option value="4h">4 小時</option><option value="1d">1 日</option><option value="5m">5 分鐘</option></select><small>同步取得 1D、4H、1H、15M 以檢查週期一致性</small></div>
+                <div class="analysis-field"><label for="analysis-min-rr">最低風險報酬比</label><select id="analysis-min-rr"><option value="1.5">1 : 1.5</option><option value="2" selected>1 : 2</option><option value="2.5">1 : 2.5</option></select><small>未達門檻不提供有效進場訊號</small></div>
             </div>
-            <div class="alert-toolbar"><span id="alerts-status" class="market-status" role="status" aria-live="polite">載入歷史警示並連接監控服務…</span><button type="button" id="alerts-notify-btn" class="market-refresh-btn">啟用背景手機推播</button></div>
-            <div id="alerts-list" class="alerts-list"><div class="muted">載入歷史警示中；後端部署完成後會持續監控並推播。</div></div>
-            <div class="alert-legend">
-                <strong>訊號速讀</strong>
-                <div class="alert-legend-grid">
-                    <span><b class="signal-long">做多</b> 多頭指標與量能確認，或定投均價差由負轉正</span>
-                    <span><b class="signal-short">做空</b> 空頭指標與量能確認，或定投均價差由正轉負</span>
-                    <span><b>跨零告警</b> 每日／每週／每月定投均價的「現價差」跨越 0% 才觸發一次</span>
-                    <span><b>時間框架</b> 15 分鐘、1 小時、4 小時；日線定投均價另行追蹤</span>
-                </div>
-            </div>
-            <details class="alert-glossary"><summary>指標白話備忘（點擊展開）</summary><ul>
-                <li><b>相對成交量：</b>目前這根 K 線的成交量除以前 20 根已收盤 K 線平均；2.57× 即為平均的 2.57 倍。量能放大只算確認條件，還要看價格與多空方向。</li>
-                <li><b>EMA 9／21：</b>較快與較慢的平均價格；快線在慢線上方偏多，下方偏空。</li>
-                <li><b>MACD：</b>系統會同時看柱體正負與連續變化；柱體連續擴大代表該方向動能延續，柱體收斂則代表反向動能增加，不會只看單一正負值。</li>
-                <li><b>RSI(14)：</b>14 代表最近 14 個週期的動能計算；低於 30 常見於超賣、高於 70 常見於超買。系統會結合 RSI 方向與趨勢，不單憑超買/超賣觸發。</li>
-                <li><b>ATR(14)：</b>14 代表最近 14 根 K 線，取平均真實波動幅度；數值越大代表該幣在這個週期通常波動越大，不代表漲或跌。</li>
-                <li><b>定投均價跨零：</b>比較現價與按日／週／月固定投入所形成的歷史平均成本；差值負轉正代表現價由均價下方穿至上方，正轉負則相反。這是成本位置變化，不等同趨勢反轉。</li>
+            <div id="analysis-status" class="market-status" role="status" aria-live="polite">尚未分析。按「開始分析」取得最新已收盤 K 線。</div>
+            <div id="analysis-result" class="analysis-result"><div class="alert-empty"><strong>等待分析</strong><span>不會沿用舊版異常警示或定投均價跨零訊號。此引擎只在實際取得足夠市場數據後產生評估。</span></div></div>
+            <details class="alert-glossary" open><summary>分析規則與限制</summary><ul>
+                <li>正式訊號只使用已收盤 K 線；連續兩根確認必須是不同 K 線。</li>
+                <li>形態與 SMC 結構由 OHLCV 以規則化方式估算，屬於輔助辨識，不等同人工判讀或完整訂單流資料。</li>
+                <li>成交量、RSI、MACD、EMA、結構與多週期會共同評分；任何必要模組缺少資料、連續收盤確認未成立或風險報酬比不足，最終均為觀望。</li>
+                <li>此版本使用 Binance 公開現貨 K 線 API；無法直接觀測真實掛單簿、機構訂單或完整市場深度，因此 OB、FVG、流動性掃蕩等僅作價格行為近似判讀。</li>
             </ul></details>
-            <p class="field-help">要在完全關閉 App 後仍持續監控，請依專案內 DEPLOY.md 部署常駐後端，並使用 HTTPS 網址啟用背景推播。只把前端檔案放在靜態主機時，仍只能在頁面執行期間掃描。</p>
         </section>
 
         <section class="card live-prices feature-panel" data-feature-panel="live" role="tabpanel" hidden>
@@ -131,12 +121,12 @@
             </section>
             <div class="market-rank-grid">
                 <section class="market-rank-card">
-                    <div class="market-rank-heading"><h3>漲幅排行 Top <span id="market-gainers-count-label">10</span></h3><span class="info-tip" title="顯示符合成交額門檻的 USDT 現貨交易對中，24 小時漲幅最高的幣種。高漲幅也可能伴隨較高波動風險。">i</span></div>
+                    <div class="market-rank-heading"><h3>漲幅排行 Top <span id="market-gainers-count-label">10</span></h3><span class="info-tip" title="顯示符合成交額門檻的 現貨交易對中，24 小時漲幅最高的幣種。高漲幅也可能伴隨較高波動風險。">i</span></div>
                     <p class="market-explainer">漲幅高表示過去 24 小時價格上升較多，不代表現在追買就會繼續漲。</p>
                     <div class="market-table-wrap"><table class="market-table"><thead><tr><th># / 幣種</th><th>價格</th><th>24h 漲跌</th><th>成交額</th></tr></thead><tbody id="market-gainers-body"><tr><td colspan="4" class="muted">載入中…</td></tr></tbody></table></div>
                 </section>
                 <section class="market-rank-card">
-                    <div class="market-rank-heading"><h3>跌幅排行 Top <span id="market-losers-count-label">10</span></h3><span class="info-tip" title="顯示符合成交額門檻的 USDT 現貨交易對中，24 小時跌幅最大的幣種。跌得多不代表便宜，也可能繼續下跌。">i</span></div>
+                    <div class="market-rank-heading"><h3>跌幅排行 Top <span id="market-losers-count-label">10</span></h3><span class="info-tip" title="顯示符合成交額門檻的 現貨交易對中，24 小時跌幅最大的幣種。跌得多不代表便宜，也可能繼續下跌。">i</span></div>
                     <p class="market-explainer">用來找出弱勢幣種及市場風險，不要只因跌幅大就認為值得抄底。</p>
                     <div class="market-table-wrap"><table class="market-table"><thead><tr><th># / 幣種</th><th>價格</th><th>24h 漲跌</th><th>成交額</th></tr></thead><tbody id="market-losers-body"><tr><td colspan="4" class="muted">載入中…</td></tr></tbody></table></div>
                 </section>
@@ -164,7 +154,7 @@
                 <div class="section-heading"><h3 class="section-title">定投推薦總覽</h3><span class="last-updated">依 Binance 可取得的歷史資料</span></div>
                 <p class="section-hint">自動掃描幣種，依所選定投頻率的歷史定投平均成本與即時現價分級。點選幣種可查看完整最佳／最差情境。</p>
                 <div class="dca-discovery-controls">
-                    <label>掃描範圍 <select id="dca-scan-universe"><option value="all" selected>全部 Binance USDT 現貨（全幣種）</option><option value="top25">市值前 25 大</option></select></label>
+                    <label>掃描範圍 <select id="dca-scan-universe"><option value="all" selected>全部合格現貨（全幣種）</option><option value="top25">市值前 25 大</option></select></label>
                     <label>搜尋幣種 <input id="dca-discovery-search" type="search" placeholder="例如 BTC、SOL" autocomplete="off"></label>
                     <label>推薦層級 <select id="dca-tier-filter"><option value="all">全部層級</option><option value="0">非常推薦</option><option value="1">推薦</option><option value="2">普通</option><option value="3">不推薦</option><option value="4">非常不推薦</option></select></label>
                     <button type="button" id="dca-scan-btn" class="btn-primary">掃描推薦幣種</button>
@@ -189,7 +179,7 @@
                         <button type="button" id="dca-symbol-toggle" class="symbol-picker-toggle" aria-label="展開幣種清單" title="選擇幣種">▾</button>
                         <div id="dca-symbol-options" class="symbol-options" role="listbox" hidden></div>
                     </div>
-                    <small class="field-help">可點選市值前 25 大幣種，也可直接輸入其他 Binance USDT 現貨幣種。</small>
+                    <small class="field-help">可點選市值前 25 大幣種，也可直接輸入其他 Binance 現貨幣種。</small>
                 </div>
                 <div class="form-row">
                     <label for="dca-start">開始時間</label>
@@ -255,7 +245,7 @@
 
         <section class="card kline-panel feature-panel" data-feature-panel="kline" role="tabpanel" hidden>
             <h2 class="section-title">K 棒漲跌幅至現價</h2>
-            <p class="section-hint">含 Binance 上架幣種市值前 25、漲幅前 15、跌幅前 15，以及您自填的幣種（USDT 現貨）</p>
+            <p class="section-hint">含 Binance 上架幣種市值前 25、漲幅前 15、跌幅前 15，以及您自填的幣種（現貨）</p>
 
             <div class="form-row">
                 <label for="kline-interval">K 週期</label>

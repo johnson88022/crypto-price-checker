@@ -1,4 +1,4 @@
-const CACHE_VERSION = "v10";
+const CACHE_VERSION = "v11";
 const CACHE_NAME = `crypto-price-checker-${CACHE_VERSION}`;
 const APP_SHELL = ["./", "./index.html", "./app.js", "./style.css", "./manifest.webmanifest", "./icon.png", "./icon-192.png", "./icon-512.png"];
 self.addEventListener("install", event => event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(APP_SHELL)).then(() => self.skipWaiting())));

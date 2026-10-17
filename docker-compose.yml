@@ -8,9 +8,10 @@ services:
     environment:
       PORT: 8080
       SCAN_INTERVAL_MS: 60000
-      SCAN_CONCURRENCY: 16
-      MIN_QUOTE_VOLUME: 0
+      SCAN_CONCURRENCY: 8
+      MIN_QUOTE_VOLUME: 1000000
       VAPID_SUBJECT: "mailto:admin@example.com"
       EXCLUDED_STABLE_BASES: "USDT,USDC,BUSD,FDUSD,TUSD,USDP,DAI,USDE,USDS,USD1,UST,USTC,FRAX,LUSD,USDD,EURC,AEUR,EURI"
+      ALERT_UNIVERSE_LIMIT: 40
     volumes:
       - ./data:/app/data
