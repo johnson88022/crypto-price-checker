@@ -1592,8 +1592,13 @@ export default {
   },
 
   async scheduled(controller, env, ctx) {
-    // Legacy anomaly/DCA alert scans are retired. Technical analysis is now explicitly
-    // requested by the user in the frontend and only uses confirmed closed candles.
-    console.log("Legacy scheduled alert scan disabled; use the on-demand analysis engine.");
+    ctx.waitUntil(
+      scanAll(env).catch(error => {
+        console.error(
+          "Scheduled scan failed:",
+          error.message || error
+        );
+      })
+    );
   }
 };

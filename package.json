@@ -2,7 +2,7 @@
   "name": "crypto-price-checker",
   "version": "2.0.0",
   "private": true,
-  "description": "Crypto Price Checker with on-demand multi-factor crypto technical analysis",
+  "description": "Crypto Price Checker with persistent market alerts and background Web Push monitoring",
   "main": "server.js",
   "scripts": { "start": "node server.js" },
   "dependencies": { "web-push": "^3.6.7" }

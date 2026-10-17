@@ -8,7 +8,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Crypto Price Checker">
     <meta name="mobile-web-app-capable" content="yes">
-    <meta name="description" content="Crypto Price Checker — Binance 即時報價與多週期加密貨幣技術分析">
+    <meta name="description" content="Crypto Price Checker — Binance 即時幣價與 K 棒漲跌幅查詢">
     <link rel="manifest" href="./manifest.webmanifest">
     <link rel="icon" href="./icon.png" type="image/png">
     <link rel="apple-touch-icon" href="./icon-192.png">
@@ -37,7 +37,8 @@
         </header>
 
         <nav class="feature-tabs" role="tablist" aria-label="功能切換">
-            <button type="button" class="feature-tab active" data-feature-tab="alerts" role="tab" aria-selected="true">多空分析引擎</button>
+            <button type="button" class="feature-tab" data-feature-tab="analysis" role="tab" aria-selected="false">多空分析</button>
+            <button type="button" class="feature-tab active" data-feature-tab="alerts" role="tab" aria-selected="true">異常警示</button>
             <button type="button" class="feature-tab" data-feature-tab="live" role="tab" aria-selected="false">即時報價</button>
             <button type="button" class="feature-tab" data-feature-tab="market" role="tab" aria-selected="false">市場總覽</button>
             <button type="button" class="feature-tab" data-feature-tab="dca" role="tab" aria-selected="false">定投報酬</button>
@@ -49,21 +50,57 @@
             <span id="app-status-text">準備載入…</span>
         </div>
 
-        <section class="card feature-panel alerts-panel analysis-engine-panel" data-feature-panel="alerts" role="tabpanel" aria-label="加密貨幣多空訊號綜合分析引擎">
-            <div class="section-heading"><div><h2 class="section-title">加密貨幣多空訊號綜合分析引擎</h2><p class="section-hint">以 Binance 已收盤 K 線為基礎，綜合形態學、SMC、成交量、RSI、MACD、EMA 與多週期方向。資料不足或必要條件未成立時，一律觀望。</p></div><button type="button" id="analysis-run-btn" class="market-refresh-btn">開始分析</button></div>
-            <div class="analysis-controls">
-                <div class="analysis-field"><label for="analysis-symbol">交易對</label><input id="analysis-symbol" value="BTCUSDT" placeholder="BTCUSDT 或 BTC/USDT" autocomplete="off"><small>Binance USDT 現貨，例如 BTCUSDT、ETHUSDT、SOLUSDT</small></div>
-                <div class="analysis-field"><label for="analysis-interval">主要分析週期</label><select id="analysis-interval"><option value="15m">15 分鐘</option><option value="1h" selected>1 小時</option><option value="4h">4 小時</option><option value="1d">1 日</option><option value="5m">5 分鐘</option></select><small>同步取得 1D、4H、1H、15M 以檢查週期一致性</small></div>
-                <div class="analysis-field"><label for="analysis-min-rr">最低風險報酬比</label><select id="analysis-min-rr"><option value="1.5">1 : 1.5</option><option value="2" selected>1 : 2</option><option value="2.5">1 : 2.5</option></select><small>未達門檻不提供有效進場訊號</small></div>
+        <section class="card feature-panel alerts-panel" data-feature-panel="alerts" role="tabpanel" aria-label="異常警示">
+            <div class="section-heading">
+                <div><h2 class="section-title">多空訊號警示</h2><p class="section-hint">後端定時監控高成交量現貨交易對；技術訊號需多項條件全部一致，並連續兩根已收盤 K 線確認。近 1 小時告警置於主畫面，較早紀錄移至歷史分頁。</p></div>
+                <button type="button" id="alerts-refresh-btn" class="market-refresh-btn">更新警示</button>
             </div>
-            <div id="analysis-status" class="market-status" role="status" aria-live="polite">尚未分析。按「開始分析」取得最新已收盤 K 線。</div>
-            <div id="analysis-result" class="analysis-result"><div class="alert-empty"><strong>等待分析</strong><span>不會沿用舊版異常警示或定投均價跨零訊號。此引擎只在實際取得足夠市場數據後產生評估。</span></div></div>
-            <details class="alert-glossary" open><summary>分析規則與限制</summary><ul>
-                <li>正式訊號只使用已收盤 K 線；連續兩根確認必須是不同 K 線。</li>
-                <li>形態與 SMC 結構由 OHLCV 以規則化方式估算，屬於輔助辨識，不等同人工判讀或完整訂單流資料。</li>
-                <li>成交量、RSI、MACD、EMA、結構與多週期會共同評分；任何必要模組缺少資料、連續收盤確認未成立或風險報酬比不足，最終均為觀望。</li>
-                <li>此版本使用 Binance 公開現貨 K 線 API；無法直接觀測真實掛單簿、機構訂單或完整市場深度，因此 OB、FVG、流動性掃蕩等僅作價格行為近似判讀。</li>
+            <div class="alert-toolbar"><span id="alerts-status" class="market-status" role="status" aria-live="polite">載入歷史警示並連接監控服務…</span><button type="button" id="alerts-notify-btn" class="market-refresh-btn">啟用背景手機推播</button></div>
+            <div class="alert-subtabs" role="tablist" aria-label="告警檢視"><button type="button" class="alert-subtab active" data-alert-view="recent" role="tab" aria-selected="true">近 1 小時告警</button><button type="button" class="alert-subtab" data-alert-view="history" role="tab" aria-selected="false">歷史告警</button><span id="alert-view-count" class="alert-view-count"></span></div>
+            <p class="alert-filter-note">僅在趨勢、動能、RSI、成交量與 K 線方向全部一致，且連續兩根已收盤 K 線確認後才發出技術告警。低於門檻不會為了填滿畫面而告警；規則仍需歷史回測驗證。</p>
+            <div id="alerts-list" class="alerts-list"><div class="muted">載入歷史警示中；後端部署完成後會持續監控並推播。</div></div>
+            <div class="alert-legend">
+                <strong>訊號速讀</strong>
+                <div class="alert-legend-grid">
+                    <span><b class="signal-long">做多</b> 趨勢、動能、RSI 與量能需有足夠一致性，並經兩根收盤 K 線確認</span>
+                    <span><b class="signal-short">做空</b> 空方條件需有足夠一致性，並經兩根收盤 K 線確認；不追逐單根急跌</span>
+                    <span><b>量能確認</b> 相對成交量至少 1.8 倍，且價格方向與動能需一致</span>
+                    <span><b>時間框架</b> 15 分鐘、1 小時、4 小時；日線定投均價另行追蹤</span>
+                </div>
+            </div>
+            <details class="alert-glossary"><summary>指標白話備忘（點擊展開）</summary><ul>
+                <li><b>相對成交量：</b>目前這根 K 線的成交量除以前 20 根已收盤 K 線平均；2.57× 即為平均的 2.57 倍。量能放大只算確認條件，還要看價格與多空方向。</li>
+                <li><b>EMA 9／21：</b>較快與較慢的平均價格；快線在慢線上方偏多，下方偏空。</li>
+                <li><b>MACD：</b>系統會同時看柱體正負與連續變化；柱體連續擴大代表該方向動能延續，柱體收斂則代表反向動能增加，不會只看單一正負值。</li>
+                <li><b>RSI(14)：</b>14 代表最近 14 個週期的動能計算；低於 30 常見於超賣、高於 70 常見於超買。系統會結合 RSI 方向與趨勢，不單憑超買/超賣觸發。</li>
+                <li><b>ATR(14)：</b>14 代表最近 14 根 K 線，取平均真實波動幅度；數值越大代表該幣在這個週期通常波動越大，不代表漲或跌。</li>
+                <li><b>定投均價跨零：</b>比較現價與按日／週／月固定投入所形成的歷史平均成本；差值負轉正代表現價由均價下方穿至上方，正轉負則相反。這是成本位置變化，不等同趨勢反轉。</li>
             </ul></details>
+            <p class="field-help">要在完全關閉 App 後仍持續監控，請依專案內 DEPLOY.md 部署常駐後端，並使用 HTTPS 網址啟用背景推播。只把前端檔案放在靜態主機時，仍只能在頁面執行期間掃描。</p>
+        </section>
+
+        <section class="feature-panel analysis-panel" data-feature-panel="analysis" role="tabpanel" aria-label="加密貨幣多空分析">
+            <section class="card analysis-hero">
+                <div class="analysis-controls">
+                    <label>交易對<input id="analysis-symbol" value="BTCUSDT" maxlength="20" autocomplete="off" placeholder="BTCUSDT"></label>
+                    <label>主要週期<select id="analysis-interval"><option value="15m">15m</option><option value="1h" selected>1H</option><option value="4h">4H</option><option value="1d">1D</option></select></label>
+                    <button type="button" id="analysis-run" class="btn-primary">開始分析</button>
+                </div>
+                <div class="analysis-summary-head"><div><span class="eyebrow">最終分析結果</span><h2 id="analysis-symbol-title">BTC/USDT</h2><p id="analysis-updated" class="muted">尚未取得市場資料</p></div><div id="analysis-status-pill" class="analysis-status neutral">等待分析</div></div>
+                <div class="analysis-summary-grid"><div><small>目前價格</small><strong id="analysis-price">資料不足</strong></div><div><small>主要趨勢</small><strong id="analysis-trend">無法判定</strong></div><div><small>訊號確認</small><strong id="analysis-confirm">尚未確認</strong></div><div><small>條件符合度</small><strong id="analysis-score">—</strong></div></div>
+                <h3>主要判斷依據</h3><ul id="analysis-reasons" class="analysis-reasons"><li>請開始分析以取得真實 Binance K 線資料。</li></ul>
+                <p id="analysis-risk-note" class="analysis-risk-note">風險提醒：資料取得前不提供進場判斷。</p>
+            </section>
+            <section class="card key-levels-card"><div class="section-heading"><div><h2 class="section-title">關鍵價位</h2><p class="section-hint">所有價位只根據已收盤 K 線計算；點擊價位可查看來源 K 棒。</p></div><span id="analysis-level-updated" class="muted">資料不足</span></div><div id="analysis-levels" class="analysis-levels"><p class="muted">尚無可確認價位。</p></div><div id="analysis-candle-source" class="analysis-source-detail" hidden></div></section>
+            <section class="analysis-details"><h2 class="section-title">詳細技術分析</h2><p class="section-hint">預設收合；展開查看分析依據。此頁不會取代原有歷史告警與背景推播。</p>
+                <details class="analysis-detail"><summary>A. 形態學分析</summary><div id="detail-pattern" class="analysis-detail-body">資料不足</div></details>
+                <details class="analysis-detail"><summary>B. SMC 結構</summary><div id="detail-smc" class="analysis-detail-body">資料不足</div></details>
+                <details class="analysis-detail"><summary>C. 成交量分析</summary><div id="detail-volume" class="analysis-detail-body">資料不足</div></details>
+                <details class="analysis-detail"><summary>D. RSI、MACD 與 EMA</summary><div id="detail-indicators" class="analysis-detail-body">資料不足</div></details>
+                <details class="analysis-detail"><summary>E. 多週期分析</summary><div id="detail-timeframes" class="analysis-detail-body">資料不足</div></details>
+                <details class="analysis-detail"><summary>F. 多空條件檢查</summary><div id="detail-conditions" class="analysis-detail-body">資料不足</div></details>
+                <details class="analysis-detail"><summary>G. 風險與訊號失效分析</summary><div id="detail-risk" class="analysis-detail-body">資料不足</div></details>
+            </section>
         </section>
 
         <section class="card live-prices feature-panel" data-feature-panel="live" role="tabpanel" hidden>

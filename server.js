@@ -154,8 +154,8 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/push/public-key' && req.method === 'GET') return json(res, 200, { publicKey: vapidKeys.publicKey });
     if (url.pathname === '/api/push/subscribe' && req.method === 'POST') { const sub = await readBody(req); if (!sub.endpoint || !sub.keys?.p256dh || !sub.keys?.auth) return json(res, 400, { error: 'Invalid subscription' }); state.subscriptions = state.subscriptions.filter(s => s.endpoint !== sub.endpoint); state.subscriptions.push(sub); saveState(); return json(res, 201, { ok: true, subscriptionCount: state.subscriptions.length }); }
     if (url.pathname === '/api/push/subscribe' && req.method === 'DELETE') { const body = await readBody(req); state.subscriptions = state.subscriptions.filter(s => s.endpoint !== body.endpoint); saveState(); return json(res, 200, { ok: true }); }
-    if (url.pathname === '/api/scan' && req.method === 'POST') return json(res, 410, { ok: false, disabled: true, message: '舊版異常警示掃描已停用；請使用前端多空分析引擎。' });
+    if (url.pathname === '/api/scan' && req.method === 'POST') { if (scanning) return json(res, 202, { ok: true, scanning: true }); scanMarket(); return json(res, 202, { ok: true, scanning: true }); }
     return serveStatic(req, res);
   } catch (e) { return json(res, 400, { error: e.message || 'Request failed' }); }
 });
-server.listen(PORT, () => { console.log(`Crypto Price Checker listening on ${PORT}; legacy background alert scanning is disabled.`); });
+server.listen(PORT, () => { console.log(`Crypto Price Checker listening on ${PORT}`); scanMarket(); setInterval(scanMarket, SCAN_INTERVAL_MS); });
